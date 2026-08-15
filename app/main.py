@@ -12,7 +12,7 @@ from .media import ffmpeg_available, ffprobe_available, verify_mp4
 from .core.errors import VideoError, TypedErrorCode
 from .providers.registry import build_providers, provider_status, select_provider
 from .providers.base import GenerationRequest
-from .brain.models import ContentBrief, ProductionPlan
+from .brain.models import BrandProfile, ContentBrief, ProductionPlan
 from .brain.content_brain import plan_content
 from .ads.brief import AdBrief
 from .ads.variants import generate_variants, generate_variant
@@ -633,7 +633,8 @@ def dashboard_create_project(req: DashboardProjectRequest):
         audience=req.audience, platform=platform, language=req.language,
         country=req.country, duration_seconds=req.duration_seconds,
         objective=req.objective or "awareness", tone=req.tone or "cinematic",
-        visual_style=req.visual_style, mode=mode, brand=req.brand,
+        visual_style=req.visual_style, mode=mode,
+        brand=BrandProfile(brand_name=req.brand) if req.brand else None,
     )
     cp = ORCHESTRATOR.create_job(proj.project_id, JobType.CONTENT_PLAN,
                                  inputs={"brief": brief.model_dump()})
