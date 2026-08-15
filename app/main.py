@@ -1,5 +1,7 @@
 import json, uuid
+from typing import Optional
 from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from .config import *
@@ -17,6 +19,7 @@ from .ads.variants import generate_variants, generate_variant
 from .ads.scoring import score_variant, compare_variants
 from .scene.continuity import resolve_scene_context, resolve_all_scenes, validate_continuity
 from .scene.references import registry_from_plan
+from .providers.wan import WanProvider, GenerationOptions, WanMode
 
 app=FastAPI(title="VideoFactory Local", version="1.0.0")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -89,6 +92,78 @@ async def scene_resolve_all(plan: ProductionPlan):
         "validation": report.to_dict(),
         "references": reg.to_dict(),
     }
+
+class DiagnoseRequest(BaseModel):
+    plan: Optional[ProductionPlan] = None
+
+@app.post("/api/diagnose")
+async def diagnose(req: Optional[DiagnoseRequest] = None):
+    # Phase 8: honest readiness state with exact blockers.
+    p = WanProvider(COMFYUI_URL, COMFYUI_TIMEOUT_SECONDS,
+                    t2v_workflow=WAN_T2V_WORKFLOW, i2v_workflow=WAN_I2V_WORKFLOW)
+    context = None
+    registry = None
+    if req is not None and req.plan is not None:
+        ctxs = resolve_all_scenes(req.plan)
+        if ctxs:
+            context = ctxs[0]
+        registry = registry_from_plan(req.plan)
+    report = await p.diagnose(context=context, registry=registry)
+    return report.to_dict()
+
+class GenerateRequest(BaseModel):
+    plan: ProductionPlan
+    scene_index: int
+    mode: str = "t2v"
+    width: int = 832
+    height: int = 480
+    frames: int = 81
+    fps: float = 24.0
+    steps: int = 20
+    cfg: float = 6.0
+    seed: Optional[int] = None
+    negative_prompt: str = ""
+    project_id: Optional[str] = None
+
+@app.post("/api/generate")
+async def generate_scene(req: GenerateRequest):
+    # Phase 8: real Wan T2V/I2V generation from a resolved scene context.
+    # Never returns success without a verified output MP4.
+    try:
+        mode = WanMode(req.mode)
+    except ValueError:
+        raise HTTPException(400, f"Invalid mode '{req.mode}'; use 't2v' or 'i2v'.")
+    try:
+        plan = req.plan
+        ctx = resolve_scene_context(plan, req.scene_index)
+        registry = registry_from_plan(plan)
+        options = GenerationOptions(
+            width=req.width, height=req.height, frames=req.frames, fps=req.fps,
+            steps=req.steps, cfg=req.cfg, seed=req.seed,
+            negative_prompt=req.negative_prompt, mode=mode,
+        )
+        p = WanProvider(COMFYUI_URL, COMFYUI_TIMEOUT_SECONDS,
+                        t2v_workflow=WAN_T2V_WORKFLOW, i2v_workflow=WAN_I2V_WORKFLOW)
+        result, meta = await p.generate_from_context(
+            ctx, options, registry=registry, project_id=req.project_id,
+        )
+        return {
+            "status": "COMPLETED",
+            "provider": "wan",
+            "model": meta.model,
+            "mode": meta.mode,
+            "prompt_id": meta.prompt_id,
+            "scene_index": meta.scene_index,
+            "seed": meta.seed,
+            "output_path": meta.output_path,
+            "metadata": meta.to_dict(),
+        }
+    except VideoError as e:
+        status = 502 if e.code in (TypedErrorCode.NO_PROVIDER, TypedErrorCode.COMFYUI_UNREACHABLE,
+                                   TypedErrorCode.GENERATION_TIMEOUT, TypedErrorCode.MODEL_NOT_FOUND,
+                                   TypedErrorCode.WORKFLOW_REJECTED, TypedErrorCode.NO_OUTPUT,
+                                   TypedErrorCode.WORKFLOW_NOT_FOUND, TypedErrorCode.INVALID_REFERENCE) else 500
+        raise HTTPException(status, {"status": "FAILED", "error_code": e.code.value, "error_detail": e.detail, "context": e.context})
 
 @app.post("/api/projects")
 async def create_project(req: ProjectCreate):

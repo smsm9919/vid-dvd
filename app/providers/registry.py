@@ -10,26 +10,52 @@ from __future__ import annotations
 
 from typing import Optional
 
-from ..config import COMFYUI_PROMPT_FIELD, COMFYUI_PROMPT_NODE_ID, COMFYUI_TIMEOUT_SECONDS, COMFYUI_URL, VIDEO_PROVIDERS, WORKFLOW_PATH
+from .. import config
+from ..config import (
+    COMFYUI_PROMPT_FIELD,
+    COMFYUI_PROMPT_NODE_ID,
+    COMFYUI_TIMEOUT_SECONDS,
+    COMFYUI_URL,
+    WAN_I2V_WORKFLOW,
+    WAN_REQUIRED_MODEL,
+    WAN_T2V_WORKFLOW,
+    WORKFLOW_PATH,
+)
 from ..core.errors import TypedErrorCode, VideoError
 from ..core.logging import log
 from .base import VideoProvider
 from .comfyui import ComfyUIProvider
+from .wan import WanProvider
 
 
 def build_providers() -> list[VideoProvider]:
-    """Instantiate all configured providers in preference order."""
+    """Instantiate all configured providers in preference order.
+
+    Reads ``config.VIDEO_PROVIDERS`` dynamically so test/runtime overrides of
+    the module attribute take effect.
+    """
     providers: list[VideoProvider] = []
-    names = [n.strip().lower() for n in VIDEO_PROVIDERS.split(",") if n.strip()] or ["comfyui"]
+    raw = getattr(config, "VIDEO_PROVIDERS", "")
+    names = [n.strip().lower() for n in raw.split(",") if n.strip()] or ["comfyui"]
     for name in names:
         if name == "comfyui":
             providers.append(
                 ComfyUIProvider(
-                    COMFYUI_URL,
-                    COMFYUI_TIMEOUT_SECONDS,
+                    config.COMFYUI_URL,
+                    config.COMFYUI_TIMEOUT_SECONDS,
                     workflow_path=WORKFLOW_PATH,
                     prompt_node_id=COMFYUI_PROMPT_NODE_ID,
                     prompt_field=COMFYUI_PROMPT_FIELD,
+                )
+            )
+        elif name == "wan":
+            providers.append(
+                WanProvider(
+                    config.COMFYUI_URL,
+                    config.COMFYUI_TIMEOUT_SECONDS,
+                    t2v_workflow=WAN_T2V_WORKFLOW,
+                    i2v_workflow=WAN_I2V_WORKFLOW,
+                    required_model_substring=WAN_REQUIRED_MODEL,
                 )
             )
         else:

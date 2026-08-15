@@ -1,0 +1,48 @@
+{
+  "_TEMPLATE_NOTICE": "This is NOT a working Wan I2V workflow. It is a documented adapter TEMPLATE describing the node structure the Wan I2V provider expects (reference-image conditioning). To enable real generation, export an API-format workflow from ComfyUI using the Wan2.2 I2V template (which includes a LoadImage node conditioning the generation), and REPLACE the node contents below with your exported graph. The provider validates required node classes exist, including a LoadImage node, before submitting. Do not bundle model weights.",
+  "_REQUIRED_NODES": {
+    "loader": ["CheckpointLoaderSimple", "UnetLoaderGGUF", "WanModelLoader"],
+    "load_image": ["LoadImage"],
+    "positive_prompt": ["CLIPTextEncode"],
+    "negative_prompt": ["CLIPTextEncode"],
+    "sampler": ["KSampler", "ModelSamplingSD3"],
+    "vae_decode": ["VAEDecode"],
+    "save_video": ["SaveAnimatedWEBP", "SaveVideo", "VHS_VideoCombine"]
+  },
+  "_EXPECTED_MODEL_SUBSTRING": "wan2.2",
+  "1": {
+    "class_type": "CheckpointLoaderSimple",
+    "_inputs": {"ckpt_name": "wan2.2_i2v_5b.safetensors"},
+    "inputs": {"ckpt_name": "REPLACE_WITH_REAL_WAN_I2V_MODEL"}
+  },
+  "2": {
+    "class_type": "LoadImage",
+    "_inputs": {"image": "reference_image.png"},
+    "inputs": {"image": "REPLACE_WITH_UPLOADED_REFERENCE"}
+  },
+  "3": {
+    "class_type": "CLIPTextEncode",
+    "_inputs": {"text": "positive prompt"},
+    "inputs": {"text": "REPLACE_POSITIVE_PROMPT"}
+  },
+  "4": {
+    "class_type": "CLIPTextEncode",
+    "_inputs": {"text": "negative prompt"},
+    "inputs": {"text": "REPLACE_NEGATIVE_PROMPT"}
+  },
+  "5": {
+    "class_type": "KSampler",
+    "_inputs": {"seed": 0, "steps": 20, "cfg": 6.0},
+    "inputs": {"seed": 0, "steps": 20, "cfg": 6.0, "sampler_name": "euler", "scheduler": "normal", "denoise": 1.0}
+  },
+  "6": {
+    "class_type": "VAEDecode",
+    "_inputs": {},
+    "inputs": {}
+  },
+  "7": {
+    "class_type": "SaveVideo",
+    "_inputs": {"filename_prefix": "wan_i2v"},
+    "inputs": {"filename_prefix": "wan_i2v"}
+  }
+}

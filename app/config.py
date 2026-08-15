@@ -15,6 +15,10 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 VIDEO_PROVIDERS = os.getenv("VIDEO_PROVIDERS", "comfyui").strip()
 WORKFLOW_PATH = ROOT / COMFYUI_WORKFLOW
+# Wan 2.2 (Phase 8)
+WAN_T2V_WORKFLOW = ROOT / os.getenv("WAN_T2V_WORKFLOW", "workflows/wan22_t2v_api.json")
+WAN_I2V_WORKFLOW = ROOT / os.getenv("WAN_I2V_WORKFLOW", "workflows/wan22_i2v_api.json")
+WAN_REQUIRED_MODEL = os.getenv("WAN_REQUIRED_MODEL", "wan2.2").strip()
 OUTPUT_DIR = ROOT / "output"
 PROJECTS_DIR = ROOT / "projects"
 STATIC_DIR = ROOT / "static"

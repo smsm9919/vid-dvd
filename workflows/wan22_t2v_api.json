@@ -1,0 +1,42 @@
+{
+  "_TEMPLATE_NOTICE": "This is NOT a working Wan workflow. It is a documented adapter TEMPLATE describing the node structure the Wan provider expects. To enable real generation, export an API-format workflow from ComfyUI (Workflow menu -> Save (API Format)) using the Wan2.2 5B T2V template, and REPLACE the node contents below with your exported graph. The provider validates that required node classes exist before submitting. Do not bundle model weights.",
+  "_REQUIRED_NODES": {
+    "loader": ["CheckpointLoaderSimple", "UnetLoaderGGUF", "WanModelLoader"],
+    "positive_prompt": ["CLIPTextEncode"],
+    "negative_prompt": ["CLIPTextEncode"],
+    "sampler": ["KSampler", "ModelSamplingSD3"],
+    "vae_decode": ["VAEDecode"],
+    "save_video": ["SaveAnimatedWEBP", "SaveVideo", "VHS_VideoCombine"]
+  },
+  "_EXPECTED_MODEL_SUBSTRING": "wan2.2",
+  "1": {
+    "class_type": "CheckpointLoaderSimple",
+    "_inputs": {"ckpt_name": "wan2.2_t2v_5b.safetensors"},
+    "inputs": {"ckpt_name": "REPLACE_WITH_REAL_WAN_MODEL"}
+  },
+  "2": {
+    "class_type": "CLIPTextEncode",
+    "_inputs": {"text": "positive prompt goes here"},
+    "inputs": {"text": "REPLACE_POSITIVE_PROMPT"}
+  },
+  "3": {
+    "class_type": "CLIPTextEncode",
+    "_inputs": {"text": "negative prompt"},
+    "inputs": {"text": "REPLACE_NEGATIVE_PROMPT"}
+  },
+  "4": {
+    "class_type": "KSampler",
+    "_inputs": {"seed": 0, "steps": 20, "cfg": 6.0, "denoise": 1.0},
+    "inputs": {"seed": 0, "steps": 20, "cfg": 6.0, "sampler_name": "euler", "scheduler": "normal", "denoise": 1.0}
+  },
+  "5": {
+    "class_type": "VAEDecode",
+    "_inputs": {},
+    "inputs": {}
+  },
+  "6": {
+    "class_type": "SaveVideo",
+    "_inputs": {"filename_prefix": "wan_t2v"},
+    "inputs": {"filename_prefix": "wan_t2v"}
+  }
+}
