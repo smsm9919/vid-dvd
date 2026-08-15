@@ -13,6 +13,7 @@ COMFYUI_PROMPT_FIELD = os.getenv("COMFYUI_PROMPT_FIELD", "text").strip()
 COMFYUI_TIMEOUT_SECONDS = int(os.getenv("COMFYUI_TIMEOUT_SECONDS", "1800"))
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+VIDEO_PROVIDERS = os.getenv("VIDEO_PROVIDERS", "comfyui").strip()
 WORKFLOW_PATH = ROOT / COMFYUI_WORKFLOW
 OUTPUT_DIR = ROOT / "output"
 PROJECTS_DIR = ROOT / "projects"
