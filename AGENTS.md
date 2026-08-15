@@ -33,8 +33,19 @@ verification (no mocks/fake MP4/placeholders as runtime success).
 - Phase 3-4 (typed errors, providers, media): DONE, pushed
 - Phase 5 (content brain): DONE, pushed
 - Phase 6 (ads + variants): DONE, pushed (commit 0f2024e)
-- Phase 7+ : NOT STARTED (awaiting approval)
+- Phase 7 (scene continuity + references): DONE, pushed
+- Phase 8+ : NOT STARTED (awaiting approval)
 
 ## Test Suite
-- 144 tests passing. Run: `python -m pytest tests/ -q`
+- 193 tests passing. Run: `python -m pytest tests/ -q`
 - Tests are CODE/TEST verified. No runtime GPU/ComfyUI available in this env.
+
+## Phase 7 Architecture
+- `app/scene/continuity.py`: ensure_stable_ids, resolve_scene_context, resolve_all_scenes,
+  validate_continuity (ERROR vs WARNING), build_visual_prompt (8 separated sections).
+- `app/scene/references.py`: ReferenceImage/ReferenceKind/ReferenceRegistry, registry_from_plan.
+- brain/models.py extended ADDITIVELY (id + richer optional fields on CharacterIdentity/
+  ProductIdentity/ContinuityMemory) — backward compatible with Phase 5/6.
+- Routes: /api/scene/resolve[/{scene_index}].
+- Validation codes: CHARACTER_IDENTITY_CONFLICT (ERROR), MISSING_CHARACTER_REFERENCE (ERROR),
+  ENVIRONMENT_CHANGE/LIGHTING_CHANGE/CLOTHING_CHANGE (WARNING, allowed if transition_intent declared).

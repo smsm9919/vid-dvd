@@ -10,11 +10,13 @@ from .media import ffmpeg_available, ffprobe_available, verify_mp4
 from .core.errors import VideoError, TypedErrorCode
 from .providers.registry import build_providers, provider_status, select_provider
 from .providers.base import GenerationRequest
-from .brain.models import ContentBrief
+from .brain.models import ContentBrief, ProductionPlan
 from .brain.content_brain import plan_content
 from .ads.brief import AdBrief
 from .ads.variants import generate_variants, generate_variant
 from .ads.scoring import score_variant, compare_variants
+from .scene.continuity import resolve_scene_context, resolve_all_scenes, validate_continuity
+from .scene.references import registry_from_plan
 
 app=FastAPI(title="VideoFactory Local", version="1.0.0")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -65,6 +67,28 @@ async def ads_variant(key: str, brief: AdBrief):
         raise HTTPException(404, f"Unknown variant: {key}")
     s = score_variant(r, brief)
     return {"variant": r.to_dict(), "score": s.to_dict()}
+
+@app.post("/api/scene/resolve/{scene_index}")
+async def scene_resolve(scene_index: int, plan: ProductionPlan):
+    # Phase 7: resolve a single scene's full continuity context before generation.
+    try:
+        ctx = resolve_scene_context(plan, scene_index)
+    except IndexError:
+        raise HTTPException(404, f"Scene index {scene_index} not found.")
+    report = validate_continuity(plan)
+    return {"context": ctx.to_dict(), "validation": report.to_dict()}
+
+@app.post("/api/scene/resolve")
+async def scene_resolve_all(plan: ProductionPlan):
+    # Phase 7: resolve all scenes + continuity validation + reference registry.
+    ctxs = resolve_all_scenes(plan)
+    report = validate_continuity(plan)
+    reg = registry_from_plan(plan)
+    return {
+        "contexts": [c.to_dict() for c in ctxs],
+        "validation": report.to_dict(),
+        "references": reg.to_dict(),
+    }
 
 @app.post("/api/projects")
 async def create_project(req: ProjectCreate):

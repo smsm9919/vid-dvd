@@ -150,17 +150,42 @@ class CreativeDecision(BaseModel):
 # ---------------------------------------------------------------- continuity memory
 
 class CharacterIdentity(BaseModel):
+    """Stable character identity carried across scenes.
+
+    A stable ``id`` lets scenes reference a character unambiguously instead of
+    redefining it. If omitted, :func:`app.scene.continuity.ensure_stable_ids`
+    assigns a deterministic one. No sensitive personal attributes are invented.
+    """
+
+    id: Optional[str] = Field(None, description="Stable character ID; auto-assigned if missing.")
     name: Optional[str] = None
     role: Optional[str] = None
+    age_range: Optional[str] = Field(None, description="e.g. '30-40'. Never invented if absent.")
+    gender: Optional[str] = None
     appearance: str = Field(..., description="Stable physical appearance description.")
+    hair: Optional[str] = None
+    face: Optional[str] = None
+    body: Optional[str] = None
+    skin: Optional[str] = None
     clothing: Optional[str] = None
+    accessories: Optional[str] = None
+    distinguishing_features: list[str] = Field(default_factory=list)
     physical_attributes: list[str] = Field(default_factory=list)
 
 
 class ProductIdentity(BaseModel):
+    """Stable product identity so the same product cannot drift between scenes."""
+
+    id: Optional[str] = Field(None, description="Stable product ID; auto-assigned if missing.")
     name: Optional[str] = None
     appearance: str = Field(..., description="Stable product visual description.")
+    shape: Optional[str] = None
     packaging: Optional[str] = None
+    logo_placement: Optional[str] = None
+    colors: list[str] = Field(default_factory=list)
+    materials: list[str] = Field(default_factory=list)
+    distinctive_features: list[str] = Field(default_factory=list)
+    # Backward-compatible alias used by earlier phases.
     signature_colors: list[str] = Field(default_factory=list)
 
 
@@ -170,7 +195,12 @@ class ContinuityMemory(BaseModel):
     characters: list[CharacterIdentity] = Field(default_factory=list)
     product: Optional[ProductIdentity] = None
     environment: str = ""
+    location: Optional[str] = None
     time_of_day: Optional[str] = None
+    weather: Optional[str] = None
+    season: Optional[str] = None
+    architecture: Optional[str] = None
+    environmental_objects: list[str] = Field(default_factory=list)
     lighting: str = ""
     color_palette: list[str] = Field(default_factory=list)
     camera_language: str = ""
