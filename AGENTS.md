@@ -38,15 +38,52 @@ verification (no mocks/fake MP4/placeholders as runtime success).
 - Phase 9 (voice, audio, music, SFX, captions): DONE, pushed
 - Phase 10 (professional video editing + final assembly): DONE, pushed
 - Phase 11 (production job orchestration + recovery): DONE, pushed
-- Phase 12+ : NOT STARTED (awaiting approval)
+- Phase 12 (production control center / dashboard): DONE, pushed
+- Phase 13+ : NOT STARTED (awaiting approval — do NOT invent)
 
 ## Test Suite
-- 503 tests passing. Run: `python -m pytest tests/ -q`
+- 550 tests passing. Run: `python -m pytest tests/ -q`
+- Dashboard runtime-verified against live backend (create project, plan, 7 variants,
+  scene board + continuity, job states, progress, controlled NO_PROVIDER failure,
+  retry-409, real FFmpeg assembly, final QC-verified MP4, asset QC, error center,
+  logs, path-traversal rejection, existing API regression).
 - FFmpeg editing/assembly runtime-verified (real FFmpeg 7.1.5 + libass).
 - Job orchestrator runtime-verified (real multi-scene project, state transitions,
   caching/idempotency, dependency failure, recovery/resume, real FFmpeg assembly).
 - TTS/music/SFX/Wan provider runtime NOT VERIFIED (no external provider
   configured; jobs FAIL with NO_PROVIDER, never fake success).
+
+## Phase 12 Architecture
+- `app/dashboard/__init__.py` — package
+- `app/dashboard/api.py` — thin backend layer backed by existing domain logic.
+  provider_panel() (real detection: ffmpeg version, comfyui NOT_AVAILABLE with
+  reason/url, wan NOT_CONFIGURED, tts/music/sfx NOT_CONFIGURED — never fabricated).
+  production_readiness() (CONTENT/VIDEO/VOICE/AUDIO/CAPTIONS/ASSEMBLY/QC from real
+  diagnostics; overall READY only if all READY). build_ad_variants() (7 variants +
+  heuristic scores, NOT conversion rates). scene_board() (resolved scenes +
+  continuity validation). list_assets() (real file introspection + QC state;
+  never fake PASS). final_video_info() (real QC-verified MP4 or honest NOT
+  AVAILABLE with blocker). _MemoryLogHandler (captures structured logs, no
+  secrets). install_log_capture() (idempotent startup hook).
+- `static/dashboard.html` — single-page production control center (no framework,
+  vanilla JS, dark production UI). 9 tabs: New Project, Content Plan, Ad Variants,
+  Scene Board, Job Control, Assets, Final Video, Error Center, Logs. Provider +
+  readiness panels (top, always visible). Efficient polling (jobs 3s, providers
+  30s). Retry/cancel buttons disabled for invalid transitions. Path-traversal-safe
+  downloads. Responsive (desktop/tablet/mobile).
+- `app/main.py` — `/dashboard` route + 11 `/api/dashboard/*` routes (providers,
+  readiness, create project, get plan, variants, scenes, assets, final, overview,
+  logs, download). DashboardProjectRequest validates inputs (idea/product, duration
+  5-120s, language en/de/ar, mode enum). Normalizes platform/mode to ContentBrief
+  enums. All get_project calls wrapped in JobError→404. Existing routes preserved.
+- Runtime verified: create project→plan (local planner labeled), 7 ad variants,
+  scene board + continuity PASS, scene resolution COMPLETED, VIDEO_SCENE
+  NO_PROVIDER (never fake), retry→409 NON_RETRYABLE, overview real progress 66%,
+  real FFmpeg assembly COMPLETED (1080×1920, QC PASS), final video available with
+  real h264 codec/duration/resolution, asset QC PASS for valid MP4s + FAIL for
+  corrupt, error center shows NO_PROVIDER, logs structured (PROJECT/JOB/CACHE/
+  EDIT stages), path traversal 404, existing APIs (/api/health, /api/assembly/
+  profiles, /api/projects) intact.
 
 ## Phase 11 Architecture
 - `app/jobs/state.py`: JobState enum (18 states: DRAFT→PLANNING→PLANNED→

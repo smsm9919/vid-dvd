@@ -1,0 +1,489 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VideoFactory — Production Control Center</title>
+<style>
+:root{
+  --bg:#0a0e14;--panel:#11161f;--panel2:#161c28;--border:#252d3d;--border2:#323b50;
+  --text:#e6edf3;--muted:#8b949e;--dim:#565f73;
+  --green:#2ea043;--green-bg:rgba(46,160,67,.12);--red:#f85149;--red-bg:rgba(248,81,73,.12);
+  --yellow:#d29922;--yellow-bg:rgba(210,153,34,.12);--blue:#388bfd;--blue-bg:rgba(56,139,253,.12);
+  --purple:#bc8cff;
+}
+*{box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text);margin:0;font-size:14px;line-height:1.5}
+a{color:var(--blue);text-decoration:none}
+.wrap{max-width:1400px;margin:0 auto;padding:16px}
+h1{font-size:20px;margin:0 0 4px}h2{font-size:15px;margin:0 0 12px;color:var(--text)}
+h3{font-size:13px;margin:0 0 8px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+.muted{color:var(--muted)}.dim{color:var(--dim)}
+.grid{display:grid;gap:12px}
+.row{display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:12px}
+.card-tight{padding:12px}
+.badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;letter-spacing:.3px}
+.b-green{background:var(--green-bg);color:var(--green);border:1px solid rgba(46,160,67,.3)}
+.b-red{background:var(--red-bg);color:var(--red);border:1px solid rgba(248,81,73,.3)}
+.b-yellow{background:var(--yellow-bg);color:var(--yellow);border:1px solid rgba(210,153,34,.3)}
+.b-blue{background:var(--blue-bg);color:var(--blue);border:1px solid rgba(56,139,253,.3)}
+.b-gray{background:rgba(139,148,158,.12);color:var(--muted);border:1px solid var(--border2)}
+input,textarea,select{width:100%;background:var(--bg);color:var(--text);border:1px solid var(--border2);border-radius:7px;padding:9px 11px;font-size:13px;font-family:inherit}
+input:focus,textarea:focus,select:focus{outline:none;border-color:var(--blue)}
+label{display:block;font-size:12px;color:var(--muted);margin:8px 0 4px}
+button{background:var(--green);color:#fff;border:0;padding:9px 16px;border-radius:7px;cursor:pointer;font-weight:600;font-size:13px;font-family:inherit}
+button:hover{background:#3fb950}
+button.sec{background:var(--panel2);border:1px solid var(--border2);color:var(--text)}
+button.sec:hover{background:var(--border)}
+button:disabled{opacity:.4;cursor:not-allowed}
+.btn-sm{padding:5px 10px;font-size:12px}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th,td{text-align:left;padding:7px 9px;border-bottom:1px solid var(--border)}
+th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.4px}
+tr:hover{background:rgba(136,146,176,.05)}
+.mono{font-family:'SF Mono',Menlo,Consolas,monospace;font-size:12px}
+.status-line{font-family:monospace;font-size:12px;white-space:pre-wrap}
+.pbar{height:6px;background:var(--panel2);border-radius:3px;overflow:hidden;margin:6px 0}
+.pbar-fill{height:100%;background:var(--green);transition:width .4s}
+.tabs{display:flex;gap:2px;border-bottom:1px solid var(--border);margin-bottom:12px;flex-wrap:wrap}
+.tab{padding:8px 14px;cursor:pointer;color:var(--muted);font-size:13px;border-bottom:2px solid transparent;border-radius:6px 6px 0 0}
+.tab.active{color:var(--text);border-bottom-color:var(--blue);background:var(--panel2)}
+.tab:hover{color:var(--text)}
+.scene-card{background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:8px;cursor:pointer}
+.scene-card:hover{border-color:var(--border2)}
+.scene-card.expanded{border-color:var(--blue)}
+.kv{display:grid;grid-template-columns:120px 1fr;gap:4px 12px;font-size:12px}
+.kv .k{color:var(--muted)}
+.provider-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)}
+.provider-row:last-child{border:0}
+.readiness-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px}
+.readiness-cell{text-align:center;padding:10px;border-radius:7px;border:1px solid var(--border)}
+.log-line{padding:3px 0;border-bottom:1px solid var(--border);font-family:monospace;font-size:11px;white-space:pre-wrap;word-break:break-all}
+.log-INFO{color:var(--text)}.log-ERROR{color:var(--red)}.log-WARNING{color:var(--yellow)}
+.tag{display:inline-block;background:var(--panel2);border:1px solid var(--border2);border-radius:4px;padding:1px 6px;font-size:11px;margin:2px}
+.hidden{display:none}
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--border2);border-top-color:var(--blue);border-radius:50%;animation:sp 1s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+@media(max-width:768px){.kv{grid-template-columns:90px 1fr}.wrap{padding:10px}}
+video{max-width:100%;border-radius:8px;background:#000}
+.cols-2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media(max-width:900px){.cols-2{grid-template-columns:1fr}}
+.err-box{background:var(--red-bg);border:1px solid rgba(248,81,73,.3);border-radius:7px;padding:10px;margin:6px 0;font-size:12px}
+.action-needed{background:var(--yellow-bg);border:1px solid rgba(210,153,34,.3);border-radius:7px;padding:10px;font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+<!-- HEADER -->
+<div class="card">
+  <div class="row" style="justify-content:space-between">
+    <div><h1>🎬 VideoFactory — Production Control Center</h1><span class="muted" id="readiness-banner">Checking system readiness…</span></div>
+    <div class="row">
+      <button class="sec btn-sm" onclick="loadProviders()">Refresh Status</button>
+      <button class="sec btn-sm" onclick="newProject()">New Project</button>
+    </div>
+  </div>
+</div>
+
+<!-- PROVIDER + READINESS -->
+<div class="cols-2">
+  <div class="card">
+    <h3>System Readiness</h3>
+    <div id="readiness-grid" class="readiness-grid"></div>
+  </div>
+  <div class="card">
+    <h3>Provider Status</h3>
+    <div id="provider-panel"></div>
+  </div>
+</div>
+
+<!-- TABS -->
+<div class="tabs" id="tabs">
+  <div class="tab active" data-tab="create" onclick="showTab('create')">New Project</div>
+  <div class="tab" data-tab="plan" onclick="showTab('plan')">Content Plan</div>
+  <div class="tab" data-tab="variants" onclick="showTab('variants')">Ad Variants</div>
+  <div class="tab" data-tab="scenes" onclick="showTab('scenes')">Scene Board</div>
+  <div class="tab" data-tab="jobs" onclick="showTab('jobs')">Job Control</div>
+  <div class="tab" data-tab="assets" onclick="showTab('assets')">Assets</div>
+  <div class="tab" data-tab="final" onclick="showTab('final')">Final Video</div>
+  <div class="tab" data-tab="errors" onclick="showTab('errors')">Error Center</div>
+  <div class="tab" data-tab="logs" onclick="showTab('logs')">Logs</div>
+</div>
+
+<!-- CREATE -->
+<div id="tab-create" class="card">
+  <h2>Create Production Project</h2>
+  <div class="cols-2">
+    <div>
+      <label>Idea / Topic *</label>
+      <input id="f-idea" placeholder="A cinematic lion hunting in the jungle">
+      <label>Product / Service</label>
+      <input id="f-product" placeholder="Luxury perfume / SaaS tool / etc.">
+      <label>Brand</label>
+      <input id="f-brand" placeholder="Brand name">
+      <label>Audience</label>
+      <input id="f-audience" placeholder="Young professionals 25-35">
+      <label>Country / Market</label>
+      <input id="f-country" placeholder="US / DE / AE / global">
+    </div>
+    <div>
+      <label>Language</label>
+      <select id="f-language"><option value="en">English</option><option value="de">German</option><option value="ar">Arabic</option></select>
+      <label>Platform</label>
+      <select id="f-platform"><option value="tiktok">TikTok</option><option value="instagram">Instagram Reels</option><option value="youtube_shorts">YouTube Shorts</option><option value="youtube">YouTube</option></select>
+      <label>Duration (seconds)</label>
+      <input id="f-duration" type="number" min="5" max="120" value="20">
+      <label>Objective</label>
+      <select id="f-objective"><option value="awareness">Awareness</option><option value="consideration">Consideration</option><option value="conversion">Conversion</option><option value="engagement">Engagement</option></select>
+      <label>Tone</label>
+      <select id="f-tone"><option value="">Auto</option><option value="dramatic">Dramatic</option><option value="playful">Playful</option><option value="premium">Premium</option><option value="urgent">Urgent</option><option value="inspirational">Inspirational</option></select>
+      <label>Visual Style</label>
+      <input id="f-style" placeholder="cinematic / minimal / vibrant">
+      <label>Mode</label>
+      <select id="f-mode"><option value="cinematic">Cinematic</option><option value="ad">Advertisement</option><option value="documentary">Documentary</option><option value="ugc">UGC</option><option value="promotional">Promotional</option></select>
+    </div>
+  </div>
+  <label>Product Facts (optional, one per line)</label>
+  <textarea id="f-facts" rows="2" placeholder="Vegan&#10;30-day money-back guarantee"></textarea>
+  <label>Approved Claims (optional, one per line)</label>
+  <textarea id="f-claims" rows="2" placeholder="Clinically tested&#10;#1 rated by users"></textarea>
+  <div style="margin-top:12px"><button onclick="createProject()">Create & Generate Plan</button> <span class="muted" id="create-msg"></span></div>
+</div>
+
+<!-- PLAN -->
+<div id="tab-plan" class="card hidden">
+  <h2>AI Content Plan <span id="planner-badge" class="badge b-gray"></span></h2>
+  <div id="plan-view" class="muted">No plan generated yet. Create a project first.</div>
+</div>
+
+<!-- VARIANTS -->
+<div id="tab-variants" class="card hidden">
+  <h2>Advertising Variants <span class="muted" style="font-size:11px;font-weight:400">(7 creative directions)</span></h2>
+  <div style="margin-bottom:10px"><button class="btn-sm" onclick="generateVariants()">Generate Variants</button> <span class="muted" id="variants-msg"></span></div>
+  <div id="variants-view" class="muted">No variants generated yet.</div>
+</div>
+
+<!-- SCENES -->
+<div id="tab-scenes" class="card hidden">
+  <h2>Scene Board & Continuity</h2>
+  <div id="continuity-panel"></div>
+  <div id="scenes-view" class="muted">No scenes resolved yet.</div>
+</div>
+
+<!-- JOBS -->
+<div id="tab-jobs" class="card hidden">
+  <h2>Job Control Center <span class="muted" style="font-size:11px;font-weight:400">(Phase 11 orchestrator — source of truth)</span></h2>
+  <div id="progress-panel"></div>
+  <div id="jobs-view" class="muted">No jobs yet.</div>
+</div>
+
+<!-- ASSETS -->
+<div id="tab-assets" class="card hidden">
+  <h2>Asset Library</h2>
+  <div id="assets-view" class="muted">No assets yet.</div>
+</div>
+
+<!-- FINAL -->
+<div id="tab-final" class="card hidden">
+  <h2>Final Video</h2>
+  <div id="final-view" class="muted">No final video yet.</div>
+</div>
+
+<!-- ERRORS -->
+<div id="tab-errors" class="card hidden">
+  <h2>Error Center</h2>
+  <div id="errors-view" class="muted">No errors.</div>
+</div>
+
+<!-- LOGS -->
+<div id="tab-logs" class="card hidden">
+  <h2>Production Logs</h2>
+  <div class="row" style="margin-bottom:10px">
+    <select id="log-stage" onchange="loadLogs()" style="width:auto"><option value="">All stages</option><option>JOB</option><option>PROJECT</option><option>PROVIDER</option><option>EDIT</option><option>AUDIO</option><option>CACHE</option><option>QC</option></select>
+    <select id="log-sev" onchange="loadLogs()" style="width:auto"><option value="">All levels</option><option>INFO</option><option>WARNING</option><option>ERROR</option></select>
+    <button class="sec btn-sm" onclick="loadLogs()">Refresh</button>
+  </div>
+  <div id="logs-view" class="muted">No logs.</div>
+</div>
+
+</div><!-- /wrap -->
+
+<script>
+let PID=null, pollTimer=null;
+const $=id=>document.getElementById(id);
+const esc=s=>(s||'').toString().replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const badge=(text,cls)=>`<span class="badge ${cls||'b-gray'}">${esc(text)}</span>`;
+
+function showTab(t){
+  document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active',x.dataset.tab===t));
+  document.querySelectorAll('[id^="tab-"]').forEach(x=>x.classList.add('hidden'));
+  $('tab-'+t).classList.remove('hidden');
+  if(t==='jobs'&&PID)loadOverview();
+  if(t==='assets'&&PID)loadAssets();
+  if(t==='final'&&PID)loadFinal();
+  if(t==='errors'&&PID)loadErrors();
+  if(t==='logs')loadLogs();
+  if(t==='scenes'&&PID)loadScenes();
+  if(t==='plan'&&PID)loadPlan();
+}
+
+// ---------- PROVIDERS + READINESS ----------
+async function loadProviders(){
+  try{
+    const r=await fetch('/api/dashboard/readiness');const d=await r.json();
+    // Readiness grid
+    const cells=[['CONTENT','content'],['VIDEO','video'],['VOICE','voice'],['AUDIO','audio'],['CAPTIONS','captions'],['ASSEMBLY','assembly'],['QC','qc']];
+    $('readiness-grid').innerHTML=cells.map(([label,key])=>{
+      const st=d[key];const cls=st==='READY'?'b-green':st==='BLOCKED'?'b-red':'b-yellow';
+      return `<div class="readiness-cell"><div class="muted" style="font-size:10px">${label}</div>${badge(st,cls)}</div>`;
+    }).join('');
+    $('readiness-banner').innerHTML=`Overall: ${badge(d.overall,d.overall==='READY'?'b-green':'b-red')}`;
+    // Provider panel
+    const p=d.providers;const rows=[
+      ['FFmpeg',p.ffmpeg],['ComfyUI',p.comfyui],['Wan',p.wan],['TTS',p.tts],['Music',p.music],['SFX',p.sfx]
+    ];
+    $('provider-panel').innerHTML=rows.map(([name,info])=>{
+      const st=info.status;const cls=st==='READY'?'b-green':st==='NOT_AVAILABLE'?'b-red':st==='NOT_CONFIGURED'?'b-yellow':'b-red';
+      let extra='';
+      if(info.version)extra+=`<div class="dim mono">${esc(info.version.substring(0,50))}</div>`;
+      if(info.reason)extra+=`<div class="dim">${esc(info.reason.substring(0,80))}</div>`;
+      if(info.url)extra+=`<div class="dim mono">${esc(info.url)}</div>`;
+      return `<div class="provider-row"><div><div>${name}</div>${extra}</div>${badge(st,cls)}</div>`;
+    }).join('');
+  }catch(e){$('readiness-banner').textContent='Failed to load status.'}
+}
+
+// ---------- PROJECT CREATION ----------
+function newProject(){PID=null;showTab('create')}
+
+async function createProject(){
+  const facts=$('f-facts').value.trim().split('\n').filter(x=>x.trim());
+  const claims=$('f-claims').value.trim().split('\n').filter(x=>x.trim());
+  const body={
+    idea:$('f-idea').value.trim(),product_or_service:$('f-product').value.trim(),
+    brand:$('f-brand').value.trim(),audience:$('f-audience').value.trim(),
+    country:$('f-country').value.trim(),language:$('f-language').value,
+    platform:$('f-platform').value,duration_seconds:+$('f-duration').value,
+    objective:$('f-objective').value,tone:$('f-tone').value,visual_style:$('f-style').value.trim(),
+    mode:$('f-mode').value,product_facts:facts,approved_claims:claims
+  };
+  $('create-msg').innerHTML='<span class="spinner"></span> Generating plan…';
+  try{
+    const r=await fetch('/api/dashboard/projects',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const d=await r.json();
+    if(!r.ok){$('create-msg').innerHTML='<span style="color:var(--red)">'+(d.detail&&d.detail.errors?d.detail.errors.join('; '):'Failed')+'</span>';return}
+    PID=d.project_id;
+    $('planner-badge').textContent=d.planner.toUpperCase();
+    $('planner-badge').className='badge '+(d.planner==='local'?'b-yellow':'b-green');
+    $('create-msg').innerHTML=`Project <code>${PID}</code> created. ${d.planner_note}`;
+    loadPlan();startPolling();
+  }catch(e){$('create-msg').innerHTML='<span style="color:var(--red)">Error: '+e+'</span>'}
+}
+
+// ---------- PLAN ----------
+async function loadPlan(){
+  if(!PID)return;
+  const r=await fetch(`/api/dashboard/projects/${PID}/plan`);const d=await r.json();
+  if(!r.ok){$('plan-view').textContent='No plan available.';return}
+  const p=d.plan;const c=p.content;const cr=p.creative;const m=p.meta;
+  const kv=(k,v)=>`<div class="k">${k}</div><div>${esc(v||'—')}</div>`;
+  $('plan-view').innerHTML=`
+    <div class="kv">
+      ${kv('Title',p.title)}
+      ${kv('Audience',c.audience)}
+      ${kv('Platform',c.platform)}
+      ${kv('Objective',c.objective)}
+      ${kv('Duration',c.duration_seconds+'s')}
+      ${kv('Tone',c.tone)}
+      ${kv('Language',c.language)}
+      ${kv('Hook',cr.hook)}
+      ${kv('Core Message',c.core_message)}
+      ${kv('CTA',cr.cta)}
+      ${kv('Narrative',cr.narrative_structure)}
+      ${kv('Visual Style',c.visual_style)}
+      ${kv('Planner',m.planner+' ('+(m.model||'local')+')')}
+    </div>
+    <div style="margin-top:10px" class="muted">${d.planner==='local'?'LOCAL PLANNER (deterministic) — not an LLM. Gemini is used only when GEMINI_API_KEY is configured.':d.planner+' planner.'}</div>`;
+  $('planner-badge').textContent=d.planner.toUpperCase();
+}
+
+// ---------- VARIANTS ----------
+async function generateVariants(){
+  if(!PID){$('variants-msg').textContent='Create a project first.';return}
+  $('variants-msg').innerHTML='<span class="spinner"></span>';
+  const body={
+    idea:$('f-idea').value.trim(),product_or_service:$('f-product').value.trim(),
+    brand:$('f-brand').value.trim(),audience:$('f-audience').value.trim(),
+    country:$('f-country').value.trim(),language:$('f-language').value,
+    platform:$('f-platform').value,duration_seconds:+$('f-duration').value,
+    objective:$('f-objective').value,product_facts:$('f-facts').value.trim().split('\n').filter(x=>x.trim()),
+    approved_claims:$('f-claims').value.trim().split('\n').filter(x=>x.trim())
+  };
+  const r=await fetch(`/api/dashboard/projects/${PID}/variants`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const d=await r.json();
+  if(!r.ok){$('variants-msg').innerHTML='<span style="color:var(--red)">Failed</span>';return}
+  $('variants-msg').textContent=d.note;
+  $('variants-view').innerHTML=d.variants.map(v=>`
+    <div class="scene-card" onclick="this.classList.toggle('expanded')">
+      <div class="row" style="justify-content:space-between">
+        <div><b>${esc(v.label)} — ${esc(v.name)}</b> <span class="tag">${esc(v.tone)}</span> <span class="tag">${esc(v.pacing)}</span></div>
+        <div>${badge('Score: '+v.score.total+'/'+v.score.max_total,'b-blue')}</div>
+      </div>
+      <div class="muted" style="margin-top:6px;font-size:12px"><b>Strategy:</b> ${esc(v.strategic_objective)}</div>
+      <div class="muted" style="font-size:12px"><b>Hook:</b> ${esc(v.plan.creative.hook)}</div>
+      <div class="muted" style="font-size:12px"><b>CTA:</b> ${esc(v.cta_strategy)}</div>
+      <div class="muted" style="font-size:12px"><b>Visual:</b> ${esc(v.visual_style)} · ${esc(v.camera_language)}</div>
+      ${v.warnings.length?`<div class="err-box" style="margin-top:6px"><b>Warnings:</b> ${v.warnings.map(esc).join('; ')}</div>`:''}
+      ${v.risks.length?`<div class="action-needed" style="margin-top:4px"><b>Risks:</b> ${v.risks.map(esc).join('; ')}</div>`:''}
+      <div class="dim" style="margin-top:4px">Scenes: ${v.plan.scenes.length} · VO: ${esc(v.vo_strategy)}</div>
+    </div>`).join('');
+}
+
+// ---------- SCENES ----------
+async function loadScenes(){
+  if(!PID)return;
+  const r=await fetch(`/api/dashboard/projects/${PID}/scenes`);const d=await r.json();
+  if(!r.ok){$('scenes-view').textContent='Generate a plan first.';return}
+  const ct=d.continuity;
+  const cls=ct.ok?'b-green':(ct.errors.length?'b-red':'b-yellow');
+  $('continuity-panel').innerHTML=`<div class="card-tight" style="background:var(--panel2);border:1px solid var(--border);border-radius:8px;margin-bottom:10px">
+    <h3>Continuity Validation</h3>${badge(ct.ok?'PASS':(ct.errors.length?'ERROR':'WARNING'),cls)}
+    ${ct.errors.map(e=>`<div class="err-box">ERROR [${esc(e.code)}] Scene ${e.scene_index||'?'}: ${esc(e.message)}</div>`).join('')}
+    ${ct.warnings.map(w=>`<div class="action-needed">WARNING [${esc(w.code)}] Scene ${w.scene_index||'?'}: ${esc(w.message)}</div>`).join('')}
+    ${ct.ok?'<div class="muted" style="margin-top:6px">No continuity errors. Generation may proceed.</div>':''}
+  </div>`;
+  $('scenes-view').innerHTML=d.scenes.map(s=>`
+    <div class="scene-card" onclick="this.classList.toggle('expanded')">
+      <div class="row" style="justify-content:space-between">
+        <div><b>Scene ${s.scene_index}</b> · ${esc(s.purpose)} · ${s.duration}s</div>
+        ${badge(s.reference_images&&s.reference_images.length?'REF':'','b-blue')}
+      </div>
+      <div class="muted" style="font-size:12px;margin-top:4px">${esc(s.sections.identity_section||'')}</div>
+      <div class="dim" style="font-size:11px;margin-top:4px">${esc(s.visual_prompt.substring(0,120))}…</div>
+      <div class="hidden expanded-only" style="margin-top:8px">
+        <div class="kv">
+          <div class="k">Camera</div><div>${esc(s.camera||'—')}</div>
+          <div class="k">Visual</div><div>${esc(s.visual_prompt)}</div>
+          <div class="k">Negative</div><div>${esc(s.negative_prompt)}</div>
+          <div class="k">Characters</div><div>${(s.characters||[]).map(c=>esc(c.name||'')).join(', ')||'—'}</div>
+          <div class="k">Product</div><div>${esc(s.product&&s.product.name||'—')}</div>
+          <div class="k">Refs</div><div>${(s.reference_images||[]).length} image(s)</div>
+        </div>
+      </div>
+    </div>`).join('');
+}
+
+// ---------- JOBS + PROGRESS ----------
+async function loadOverview(){
+  if(!PID)return;
+  const r=await fetch(`/api/dashboard/projects/${PID}/overview`);const d=await r.json();
+  const p=d.progress;
+  $('progress-panel').innerHTML=`<div class="card-tight" style="background:var(--panel2);border-radius:8px;margin-bottom:10px">
+    <div class="row" style="justify-content:space-between"><h3 style="margin:0">Overall Progress</h3>${badge(p.stage,p.stage==='COMPLETED'?'b-green':p.stage==='FAILED'?'b-red':'b-blue')}</div>
+    <div class="pbar"><div class="pbar-fill" style="width:${p.overall_progress}%"></div></div>
+    <div class="muted" style="font-size:11px">${p.completed_jobs}/${p.total_jobs} jobs completed · ${p.failed_jobs} failed ${p.scene?'· scenes '+p.scene:''}</div>
+  </div>`;
+  $('jobs-view').innerHTML=`<table><thead><tr><th>ID</th><th>Type</th><th>State</th><th>Scene</th><th>Provider</th><th>Retries</th><th>Error</th><th>Actions</th></tr></thead><tbody>
+    ${d.jobs.map(j=>`<tr>
+      <td class="mono dim">${j.job_id.substring(0,12)}</td>
+      <td>${j.job_type}</td>
+      <td>${badge(j.state, j.state==='COMPLETED'?'b-green':j.state==='FAILED'?'b-red':j.state==='CANCELED'?'b-gray':'b-blue')}</td>
+      <td>${j.scene_index||'—'}</td>
+      <td>${esc(j.provider||'—')}</td>
+      <td>${j.retry_count}</td>
+      <td>${j.error_code?badge(j.error_code,'b-red'):''}</td>
+      <td>${jobActions(j)}</td>
+    </tr>`).join('')}</tbody></table>`;
+}
+
+function jobActions(j){
+  let btns='';
+  const t=j.job_type;
+  const runnable=['CONTENT_PLAN','SCENE_RESOLUTION','VIDEO_SCENE','VOICEOVER','ASSEMBLY'].includes(t);
+  if(runnable&&(j.state==='DRAFT'||j.state==='QUEUED'))btns+=`<button class="btn-sm sec" onclick="runJob('${j.job_id}')">Run</button> `;
+  if(j.state==='FAILED'){const nr=['MODEL_NOT_FOUND','WORKFLOW_INVALID','INVALID_REFERENCE','UNSUPPORTED_PROFILE','NON_RETRYABLE','DEPENDENCY_FAILED'].includes(j.error_code);btns+=`<button class="btn-sm sec" ${nr?'disabled title="Non-retryable"':''} onclick="retryJob('${j.job_id}')">Retry</button> `}
+  if(['RUNNING','QUEUED','RETRYING'].includes(j.state))btns+=`<button class="btn-sm sec" onclick="cancelJob('${j.job_id}')">Cancel</button>`;
+  return btns||'—';
+}
+
+async function runJob(jid){
+  const r=await fetch(`/api/jobs/projects/${PID}/jobs/${jid}/run`,{method:'POST'});const d=await r.json();
+  loadOverview();
+}
+async function retryJob(jid){
+  const r=await fetch(`/api/jobs/projects/${PID}/jobs/${jid}/retry`,{method:'POST'});const d=await r.json();
+  if(!r.ok)alert(d.detail&&d.detail.detail||'Retry not allowed');loadOverview();
+}
+async function cancelJob(jid){
+  const r=await fetch(`/api/jobs/projects/${PID}/jobs/${jid}/cancel`,{method:'POST'});loadOverview();
+}
+
+// ---------- ASSETS ----------
+async function loadAssets(){
+  if(!PID)return;
+  const r=await fetch(`/api/dashboard/projects/${PID}/assets`);const d=await r.json();
+  if(!d.assets.length){$('assets-view').textContent='No assets yet.';return}
+  $('assets-view').innerHTML=`<table><thead><tr><th>File</th><th>Type</th><th>Size</th><th>Duration</th><th>Resolution</th><th>QC</th></tr></thead><tbody>
+    ${d.assets.map(a=>`<tr>
+      <td>${esc(a.filename)}</td><td>${a.type}</td><td class="mono">${(a.size/1024).toFixed(0)}KB</td>
+      <td>${a.duration?a.duration.toFixed(1)+'s':'—'}</td><td>${a.width?a.width+'×'+a.height:'—'}</td>
+      <td>${badge(a.qc,a.qc==='PASS'?'b-green':'b-red')}</td>
+    </tr>`).join('')}</tbody></table>`;
+}
+
+// ---------- FINAL VIDEO ----------
+async function loadFinal(){
+  if(!PID)return;
+  const r=await fetch(`/api/dashboard/projects/${PID}/final`);const d=await r.json();
+  if(!d.available){$('final-view').innerHTML=`<div class="err-box">FINAL VIDEO NOT AVAILABLE</div><div class="muted">${esc(d.reason)}</div>`;return}
+  $('final-view').innerHTML=`<div>${badge('QC PASS','b-green')}</div>
+    <video controls src="/api/dashboard/projects/${PID}/assets/download/${encodeURIComponent(d.filename)}" style="margin:10px 0"></video>
+    <div class="kv">
+      <div class="k">File</div><div>${esc(d.filename)}</div>
+      <div class="k">Duration</div><div>${d.duration?d.duration.toFixed(1)+'s':'—'}</div>
+      <div class="k">Resolution</div><div>${d.width}×${d.height}</div>
+      <div class="k">FPS</div><div>${d.fps?d.fps.toFixed(1):'—'}</div>
+      <div class="k">Video codec</div><div>${esc(d.video_codec||'—')}</div>
+      <div class="k">Audio codec</div><div>${esc(d.audio_codec||'—')}</div>
+      <div class="k">Size</div><div>${(d.size/1024).toFixed(0)}KB</div>
+    </div>`;
+}
+
+// ---------- ERRORS ----------
+async function loadErrors(){
+  if(!PID)return;
+  const r=await fetch(`/api/dashboard/projects/${PID}/overview`);const d=await r.json();
+  const failed=d.jobs.filter(j=>j.state==='FAILED');
+  if(!failed.length){$('errors-view').textContent='No failed jobs.';return}
+  const retryable=['COMFYUI_UNREACHABLE','GENERATION_TIMEOUT','FFMPEG_ERROR','CONCURRENCY_LIMIT'];
+  $('errors-view').innerHTML=failed.map(j=>`<div class="err-box">
+    <div class="row" style="justify-content:space-between"><b>${badge(j.error_code,'b-red')}</b>
+    <span class="muted">${retryable.includes(j.error_code)?badge('RETRYABLE','b-yellow'):badge('NON-RETRYABLE','b-red')}</span></div>
+    <div style="margin-top:4px"><b>Stage:</b> ${j.job_type} ${j.scene_index?'· Scene '+j.scene_index:''}</div>
+    <div><b>Job:</b> <code>${j.job_id}</code></div>
+    <div><b>Detail:</b> ${esc(j.error_detail||'')}</div>
+    <div><b>Retries:</b> ${j.retry_count}/${j.max_retries}</div>
+    <div class="muted" style="margin-top:4px"><b>Action:</b> ${retryable.includes(j.error_code)?'Retry after fixing the transient issue.':'Fix the root cause (config/model/workflow) then create a new job.'}</div>
+  </div>`).join('');
+}
+
+// ---------- LOGS ----------
+async function loadLogs(){
+  const stage=$('log-stage').value,sev=$('log-sev').value;
+  let url='/api/dashboard/logs?';if(stage)url+='stage='+stage+'&';if(sev)url+='severity='+sev+'&';
+  const r=await fetch(url);const d=await r.json();
+  if(!d.logs.length){$('logs-view').textContent='No logs.';return}
+  $('logs-view').innerHTML=d.logs.slice(-100).reverse().map(l=>
+    `<div class="log-line log-${l.level}">[${new Date(l.time*1000).toLocaleTimeString()}] [${esc(l.stage)}] ${esc(l.message)}</div>`).join('');
+}
+
+// ---------- POLLING ----------
+function startPolling(){if(pollTimer)clearInterval(pollTimer);pollTimer=setInterval(()=>{if(PID){const t=document.querySelector('.tab.active').dataset.tab;if(t==='jobs')loadOverview();}},3000)}
+function stopPolling(){if(pollTimer){clearInterval(pollTimer);pollTimer=null}}
+
+// INIT
+loadProviders();setInterval(loadProviders,30000);
+</script>
+</body>
+</html>

@@ -34,14 +34,22 @@ from .editing.qc import final_qc
 from .jobs.orchestrator import Orchestrator, JobError
 from .jobs.models import Job, JobType
 from .jobs.state import JobState
+from .dashboard import api as dashboard_api
+from .dashboard.api import install_log_capture
 
 app=FastAPI(title="VideoFactory Local", version="1.0.0")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+install_log_capture()  # Phase 12: capture structured logs for the dashboard log viewer.
 PROJECTS={}
 
 @app.get("/", response_class=HTMLResponse)
 def index():
     return (STATIC_DIR/"index.html").read_text(encoding="utf-8")
+
+@app.get("/dashboard", response_class=HTMLResponse)
+def dashboard():
+    """Phase 12: Production Control Center."""
+    return (STATIC_DIR/"dashboard.html").read_text(encoding="utf-8")
 
 @app.get("/api/health")
 async def health():
@@ -554,3 +562,207 @@ def jobs_recover_all():
     """Startup recovery: re-validate abandoned RUNNING/QUEUED/RETRYING jobs."""
     return {"recovered": {pid: [j.to_dict() for j in jobs]
                           for pid, jobs in ORCHESTRATOR.recover_all().items()}}
+
+
+# ====================================================================
+# Phase 12: Production Control Center / Dashboard API
+# ====================================================================
+class DashboardProjectRequest(BaseModel):
+    """Validated project creation request for the dashboard."""
+    idea: Optional[str] = None
+    product_or_service: Optional[str] = None
+    brand: Optional[str] = None
+    audience: Optional[str] = None
+    country: Optional[str] = None
+    language: str = "en"
+    platform: Optional[str] = None
+    duration_seconds: int = 20
+    objective: Optional[str] = None
+    tone: Optional[str] = None
+    visual_style: Optional[str] = None
+    mode: str = "cinematic"
+    product_facts: list[str] = []
+    approved_claims: list[str] = []
+    references: list[str] = []
+
+    def validate_brief(self) -> list[str]:
+        errors = []
+        if not (self.idea or self.product_or_service):
+            errors.append("Provide an idea or a product/service.")
+        if self.duration_seconds < 5 or self.duration_seconds > 120:
+            errors.append("Duration must be between 5 and 120 seconds.")
+        if self.language not in ("en", "de", "ar"):
+            errors.append("Language must be en, de, or ar.")
+        if self.mode not in ("cinematic", "ad", "documentary", "ugc", "promotional"):
+            errors.append("Mode must be cinematic, ad, documentary, ugc, or promotional.")
+        return errors
+
+
+@app.get("/api/dashboard/providers")
+async def dashboard_providers():
+    """Real provider readiness panel (never fabricated)."""
+    return await dashboard_api.provider_panel()
+
+
+@app.get("/api/dashboard/readiness")
+async def dashboard_readiness():
+    """Production readiness summary derived from real backend diagnostics."""
+    return await dashboard_api.production_readiness()
+
+
+@app.post("/api/dashboard/projects")
+def dashboard_create_project(req: DashboardProjectRequest):
+    """Create a project + generate the local ProductionPlan.
+
+    Validates inputs, creates an orchestrator project, runs the content plan,
+    and returns the plan + project id. The local planner is clearly labeled —
+    never presented as an LLM.
+    """
+    errors = req.validate_brief()
+    if errors:
+        raise HTTPException(400, {"code": "VALIDATION_ERROR", "errors": errors})
+    proj = ORCHESTRATOR.create_project()
+    # Normalize dashboard-friendly values to ContentBrief enums.
+    platform_map = {"instagram": "instagram_reels", "youtube_shorts": "youtube_shorts"}
+    mode_map = {"ad": "advertisement"}
+    platform = platform_map.get(req.platform or "tiktok", req.platform or "tiktok")
+    mode = mode_map.get(req.mode, req.mode)
+    brief = ContentBrief(
+        idea=req.idea or req.product_or_service,
+        product_or_service=req.product_or_service,
+        audience=req.audience, platform=platform, language=req.language,
+        country=req.country, duration_seconds=req.duration_seconds,
+        objective=req.objective or "awareness", tone=req.tone or "cinematic",
+        visual_style=req.visual_style, mode=mode, brand=req.brand,
+    )
+    cp = ORCHESTRATOR.create_job(proj.project_id, JobType.CONTENT_PLAN,
+                                 inputs={"brief": brief.model_dump()})
+    cp = ORCHESTRATOR.run_content_plan(proj.project_id, cp.job_id)
+    plan = proj.plan
+    if plan is None:
+        raise HTTPException(500, {"code": "PLAN_FAILED", "detail": cp.error_detail})
+    return {
+        "project_id": proj.project_id,
+        "plan": plan.model_dump(),
+        "content_plan_job": cp.to_dict(),
+        "planner": plan.meta.planner,
+        "planner_note": "LOCAL PLANNER (deterministic). Gemini is used only when GEMINI_API_KEY is configured."
+                        if plan.meta.planner == "local" else f"{plan.meta.planner} planner.",
+    }
+
+
+@app.get("/api/dashboard/projects/{pid}/plan")
+def dashboard_get_plan(pid: str):
+    """Get the stored ProductionPlan for a project."""
+    try:
+        proj = ORCHESTRATOR.get_project(pid)
+    except JobError as e:
+        raise HTTPException(404, e.to_dict())
+    if proj.plan is None:
+        raise HTTPException(404, {"code": "NO_PLAN", "detail": "No plan generated for this project."})
+    return {"plan": proj.plan.model_dump(), "planner": proj.plan.meta.planner}
+
+
+@app.post("/api/dashboard/projects/{pid}/variants")
+def dashboard_variants(pid: str, req: DashboardProjectRequest):
+    """Generate all 7 ad variants with heuristic scores + claim checks."""
+    from .brain.models import BrandProfile
+    try:
+        proj = ORCHESTRATOR.get_project(pid)
+    except JobError as e:
+        raise HTTPException(404, e.to_dict())
+    platform_map = {"instagram": "instagram_reels"}
+    platform = platform_map.get(req.platform or "tiktok", req.platform or "tiktok")
+    brand = BrandProfile(brand_name=req.brand) if req.brand else None
+    brief = AdBrief(
+        product_or_service=req.product_or_service or req.idea or "product",
+        brand=brand, target_audience=req.audience or "general",
+        market=req.country or "global", language=req.language,
+        platform=platform, duration_seconds=req.duration_seconds,
+        objective=req.objective or "awareness", product_facts=req.product_facts,
+        approved_claims=req.approved_claims,
+    )
+    return dashboard_api.build_ad_variants(brief)
+
+
+@app.get("/api/dashboard/projects/{pid}/scenes")
+def dashboard_scenes(pid: str):
+    """Scene board: resolved scenes + continuity validation."""
+    try:
+        proj = ORCHESTRATOR.get_project(pid)
+    except JobError as e:
+        raise HTTPException(404, e.to_dict())
+    if proj.plan is None:
+        raise HTTPException(404, {"code": "NO_PLAN", "detail": "Generate a plan first."})
+    return dashboard_api.scene_board(proj.plan)
+
+
+@app.get("/api/dashboard/projects/{pid}/assets")
+def dashboard_assets(pid: str):
+    """Asset library: real files with QC state (never fake valid)."""
+    try:
+        proj = ORCHESTRATOR.get_project(pid)
+    except JobError as e:
+        raise HTTPException(404, e.to_dict())
+    return {"assets": dashboard_api.list_assets(proj.assets_dir)}
+
+
+@app.get("/api/dashboard/projects/{pid}/final")
+def dashboard_final_video(pid: str):
+    """Final video info: real QC-verified MP4 or honest NOT AVAILABLE."""
+    try:
+        proj = ORCHESTRATOR.get_project(pid)
+    except JobError as e:
+        raise HTTPException(404, e.to_dict())
+    return dashboard_api.final_video_info(proj.assets_dir)
+
+
+@app.get("/api/dashboard/projects/{pid}/overview")
+def dashboard_overview(pid: str):
+    """Dashboard aggregate: project summary + jobs + progress + readiness + final."""
+    try:
+        proj = ORCHESTRATOR.get_project(pid)
+    except JobError as e:
+        raise HTTPException(404, e.to_dict())
+    jobs = proj.store.all()
+    progress = ORCHESTRATOR.get_progress(pid)
+    return {
+        "project": proj.to_summary(),
+        "jobs": [j.to_dict() for j in jobs],
+        "progress": progress,
+        "final_video": dashboard_api.final_video_info(proj.assets_dir),
+    }
+
+
+@app.get("/api/dashboard/logs")
+def dashboard_logs(stage: Optional[str] = None, job_id: Optional[str] = None,
+                   scene: Optional[int] = None, severity: Optional[str] = None):
+    """Structured log viewer with filtering. No secrets/tokens logged."""
+    records = dashboard_api.get_logs()
+    if stage:
+        records = [r for r in records if r.get("stage", "").upper() == stage.upper()]
+    if severity:
+        records = [r for r in records if r.get("level", "").upper() == severity.upper()]
+    if job_id:
+        records = [r for r in records if job_id in r.get("message", "")]
+    if scene is not None:
+        records = [r for r in records if f"scene={scene}" in r.get("message", "")
+                   or f"scene {scene}" in r.get("message", "")]
+    return {"logs": records[-200:], "count": len(records)}
+
+
+@app.get("/api/dashboard/projects/{pid}/assets/download/{filename}")
+def dashboard_download_asset(pid: str, filename: str):
+    """Safe asset download: only files within the project's assets dir."""
+    from pathlib import Path
+    try:
+        proj = ORCHESTRATOR.get_project(pid)
+    except JobError as e:
+        raise HTTPException(404, e.to_dict())
+    # Resolve safely — reject path traversal.
+    target = (proj.assets_dir / filename).resolve()
+    if not str(target).startswith(str(proj.assets_dir.resolve())):
+        raise HTTPException(400, {"code": "INVALID_PATH", "detail": "Path traversal rejected."})
+    if not target.exists() or not target.is_file():
+        raise HTTPException(404, {"code": "NOT_FOUND", "detail": "Asset not found."})
+    return FileResponse(target, filename=target.name)
