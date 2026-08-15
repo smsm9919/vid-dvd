@@ -20,6 +20,13 @@ from .ads.scoring import score_variant, compare_variants
 from .scene.continuity import resolve_scene_context, resolve_all_scenes, validate_continuity
 from .scene.references import registry_from_plan
 from .providers.wan import WanProvider, GenerationOptions, WanMode
+from .voice.tts import NullTTSProvider, TTSProvider, VoiceRequest, select_tts_provider
+from .voice.voiceover import generate_scene_voiceover, generate_project_voiceover, validate_voice_timing
+from .audio.music import MusicRequest, NullMusicProvider
+from .audio.sfx import SFXRequest, NullSFXProvider
+from .audio.mixer import MixTrack, MixOptions, mix_audio, mix_scene_audio
+from .audio.qc import verify_audio
+from .captions.captions import CaptionFormat, CaptionStyle, generate_captions, write_captions
 
 app=FastAPI(title="VideoFactory Local", version="1.0.0")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -164,6 +171,97 @@ async def generate_scene(req: GenerateRequest):
                                    TypedErrorCode.WORKFLOW_REJECTED, TypedErrorCode.NO_OUTPUT,
                                    TypedErrorCode.WORKFLOW_NOT_FOUND, TypedErrorCode.INVALID_REFERENCE) else 500
         raise HTTPException(status, {"status": "FAILED", "error_code": e.code.value, "error_detail": e.detail, "context": e.context})
+
+class VoiceGenerateRequest(BaseModel):
+    plan: ProductionPlan
+    scene_index: int
+    project_id: Optional[str] = None
+
+@app.post("/api/voice/generate")
+async def voice_generate(req: VoiceGenerateRequest):
+    # Phase 9: generate voiceover for one scene. Never fake success.
+    try:
+        plan = req.plan
+        scene = next((s for s in plan.scenes if s.index == req.scene_index), None)
+        if scene is None:
+            raise HTTPException(404, f"Scene {req.scene_index} not found.")
+        if not scene.voiceover.line.strip():
+            raise HTTPException(400, "Scene has no voiceover line.")
+        provider = select_tts_provider([])  # no real providers configured yet
+        asset, result = generate_scene_voiceover(
+            scene, plan, provider, project_id=req.project_id,
+        )
+        return {
+            "status": "COMPLETED", "provider": asset.provider,
+            "language": asset.language, "voice": asset.voice,
+            "duration": asset.duration, "output_path": asset.path,
+            "scene_index": asset.scene_index, "text": asset.text,
+        }
+    except VideoError as e:
+        raise HTTPException(502, {"status": "FAILED", "error_code": e.code.value, "error_detail": e.detail})
+
+class AudioMixRequest(BaseModel):
+    voice_path: Optional[str] = None
+    music_path: Optional[str] = None
+    sfx_paths: list[str] = []
+    ambience_path: Optional[str] = None
+    scene_duration: float
+    voice_start_offset: float = 0.0
+    music_volume: float = 0.6
+    voice_volume: float = 1.0
+    music_duck: bool = True
+    duck_level: float = 0.25
+    fade_in: float = 0.0
+    fade_out: float = 0.0
+    project_id: Optional[str] = None
+
+@app.post("/api/audio/mix")
+async def audio_mix(req: AudioMixRequest):
+    # Phase 9: FFmpeg audio mixing. Returns a verified mixed file.
+    try:
+        import uuid as _uuid
+        out_dir = OUTPUT_DIR / (req.project_id or "standalone") / _uuid.uuid4().hex[:12]
+        out_dir.mkdir(parents=True, exist_ok=True)
+        dest = out_dir / "mix.mp3"
+        result = mix_scene_audio(
+            Path(req.voice_path) if req.voice_path else None,
+            Path(req.music_path) if req.music_path else None,
+            [Path(p) for p in req.sfx_paths],
+            Path(req.ambience_path) if req.ambience_path else None,
+            dest, scene_duration=req.scene_duration, voice_start_offset=req.voice_start_offset,
+            music_volume=req.music_volume, voice_volume=req.voice_volume,
+            music_duck=req.music_duck, duck_level=req.duck_level,
+            fade_in=req.fade_in, fade_out=req.fade_out,
+        )
+        return {"status": "COMPLETED", "output_path": str(result.path),
+                "duration": result.duration, "tracks": len(result.tracks)}
+    except VideoError as e:
+        raise HTTPException(502, {"status": "FAILED", "error_code": e.code.value, "error_detail": e.detail})
+
+class CaptionRequest(BaseModel):
+    plan: ProductionPlan
+    format: str = "srt"
+    style: str = "tiktok"
+
+@app.post("/api/captions/generate")
+async def captions_generate(req: CaptionRequest):
+    # Phase 9: generate SRT/VTT/burned-in captions from plan.
+    try:
+        fmt = CaptionFormat(req.format)
+        style = CaptionStyle(req.style)
+    except ValueError:
+        raise HTTPException(400, f"Invalid format '{req.format}' or style '{req.style}'.")
+    rep = generate_captions(req.plan, fmt, style)
+    return rep.to_dict()
+
+@app.post("/api/audio/qc")
+async def audio_qc(path: str):
+    # Phase 9: verify a real audio file. Never reports success without verification.
+    try:
+        qc = verify_audio(Path(path))
+        return {"status": "COMPLETED", "qc": qc}
+    except VideoError as e:
+        raise HTTPException(502, {"status": "FAILED", "error_code": e.code.value, "error_detail": e.detail})
 
 @app.post("/api/projects")
 async def create_project(req: ProjectCreate):

@@ -35,6 +35,7 @@ class TypedErrorCode(str, Enum):
 
     # Output / media integrity
     INVALID_MP4 = "INVALID_MP4"
+    INVALID_AUDIO = "INVALID_AUDIO"
     FFMPEG_ERROR = "FFMPEG_ERROR"
 
 

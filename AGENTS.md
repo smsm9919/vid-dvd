@@ -35,26 +35,29 @@ verification (no mocks/fake MP4/placeholders as runtime success).
 - Phase 6 (ads + variants): DONE, pushed (commit 0f2024e)
 - Phase 7 (scene continuity + references): DONE, pushed
 - Phase 8 (Wan 2.2 T2V/I2V + reference workflows): DONE, pushed
-- Phase 9+ : NOT STARTED (awaiting approval)
+- Phase 9 (voice, audio, music, SFX, captions): DONE, pushed
+- Phase 10+ : NOT STARTED (awaiting approval)
 
 ## Test Suite
-- 252 tests passing. Run: `python -m pytest tests/ -q`
-- Tests are CODE/TEST verified. No real ComfyUI + Wan + GPU runtime in this env
-  (COMFYUI_RUNTIME_BLOCKED). Real runtime verification requires real ComfyUI +
-  Wan 2.2 weights + GPU.
+- 333 tests passing. Run: `python -m pytest tests/ -q`
+- FFmpeg audio mixing/captions runtime-verified (real FFmpeg 7.1.5).
+- TTS/music/SFX provider runtime NOT VERIFIED (no external provider
+  configured; Null providers raise NO_PROVIDER, never fake success).
 
-## Phase 8 Architecture
-- `app/providers/wan.py`: WanProvider(VideoProvider) composing ComfyUIProvider for
-  transport; separates WAN LOGIC (workflow/model/reference/option validation,
-  I2V image handling) from COMFYUI TRANSPORT (HTTP queue/poll/download/verify).
-  GenerationOptions (range-validated), GenerationMetadata, ReadinessReport.
-- `workflows/wan22_t2v_api.json`, `workflows/wan22_i2v_api.json`: documented
-  adapter TEMPLATES (NOT fake workflows); validate required node classes; fail
-  WORKFLOW_NOT_FOUND/WORKFLOW_INVALID. See workflows/README.md.
-- `app/core/errors.py`: added WORKFLOW_NOT_FOUND + INVALID_REFERENCE (additive).
-- `app/providers/registry.py`: supports wan + comfyui; reads VIDEO_PROVIDERS dynamically.
-- `app/config.py`: WAN_T2V_WORKFLOW, WAN_I2V_WORKFLOW, WAN_REQUIRED_MODEL.
-- Routes: /api/diagnose (READY/NOT_READY + blockers), /api/generate (T2V/I2V,
-  never fake success, returns FAILED + error_code).
-- Generate path consumes ResolvedSceneContext (Phase 7) — never a bare prompt.
-- I2V reference validation is fail-fast (before any network call).
+## Phase 9 Architecture
+- `app/voice/tts.py`: TTSProvider ABC, VoiceRequest (validated), VoiceResult,
+  NullTTSProvider (NO_PROVIDER), select_tts; en/de/ar.
+- `app/voice/voiceover.py`: build_voice_request (language propagation),
+  validate_voice_timing (ok/warning/error + strategy, no silent truncation),
+  generate_scene/project_voiceover (QC-verified).
+- `app/audio/qc.py`: verify_audio/probe_audio (INVALID_AUDIO), deterministic
+  test audio generators (silent/tone — NOT real provider output).
+- `app/audio/music.py`: MusicProvider ABC, MusicRequest, 8 moods, parse_mood.
+- `app/audio/sfx.py`: SFXProvider ABC, SFXRequest, 10 categories, parse_sfx.
+- `app/audio/mixer.py`: FFmpeg mix_audio (per-track volume, ducking, fades,
+  loudnorm, alimiter clipping prevention), mix_scene_audio convenience.
+- `app/captions/captions.py`: SRT/VTT/burned_in, TikTok/Reels/Shorts/YouTube
+  styles, validate_caption_timing (negative/overlap/out-of-range), Arabic-safe.
+- `app/core/errors.py`: added INVALID_AUDIO (additive).
+- Routes: /api/voice/generate, /api/audio/mix, /api/captions/generate, /api/audio/qc.
+- FFmpeg filter chain rule: input label + first filter no comma; [mixed]chain[out].
