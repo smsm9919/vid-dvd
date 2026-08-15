@@ -31,6 +31,9 @@ from .editing.timeline import Timeline, TimelineScene, build_timeline_from_asset
 from .editing.profiles import ExportProfile, Quality, get_profile, PROFILES
 from .editing.assembly import ExportRequest, ExportResult, export_video, validate_scene_assets
 from .editing.qc import final_qc
+from .jobs.orchestrator import Orchestrator, JobError
+from .jobs.models import Job, JobType
+from .jobs.state import JobState
 
 app=FastAPI(title="VideoFactory Local", version="1.0.0")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -393,3 +396,161 @@ def download(pid:str):
     f=OUTPUT_DIR/f"{pid}_final.mp4"
     if not f.exists(): raise HTTPException(404,"Final video not found")
     return FileResponse(f,media_type="video/mp4",filename=f.name)
+
+
+# ====================================================================
+# Phase 11: Production Job Orchestration API
+# ====================================================================
+ORCHESTRATOR = Orchestrator()
+
+
+class CreateProjectRequest(BaseModel):
+    project_id: Optional[str] = None
+
+
+class CreateJobRequest(BaseModel):
+    job_type: str
+    parent_job_id: Optional[str] = None
+    scene_index: Optional[int] = None
+    inputs: dict = {}
+    depends_on: list[str] = []
+    max_retries: int = 3
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    workflow: Optional[str] = None
+    seed: Optional[int] = None
+
+
+@app.post("/api/jobs/projects")
+def jobs_create_project(req: CreateProjectRequest):
+    """Create a new orchestrator project."""
+    proj = ORCHESTRATOR.create_project(req.project_id)
+    return proj.to_summary()
+
+
+@app.get("/api/jobs/projects")
+def jobs_list_projects():
+    """List all known orchestrator projects (survives restart)."""
+    return {"projects": ORCHESTRATOR.list_projects()}
+
+
+@app.get("/api/jobs/projects/{pid}")
+def jobs_get_project(pid: str):
+    """Get a project summary including progress."""
+    try:
+        proj = ORCHESTRATOR.get_project(pid)
+        return proj.to_summary()
+    except JobError as e:
+        raise HTTPException(404, e.to_dict())
+
+
+@app.post("/api/jobs/projects/{pid}/jobs")
+def jobs_create_job(pid: str, req: CreateJobRequest):
+    """Create a new job in a project."""
+    try:
+        jt = JobType(req.job_type)
+    except ValueError:
+        raise HTTPException(400, {"code": "INVALID_JOB_TYPE",
+                                  "detail": f"Unknown job type: {req.job_type}"})
+    try:
+        job = ORCHESTRATOR.create_job(pid, jt, parent_job_id=req.parent_job_id,
+                                      scene_index=req.scene_index, inputs=req.inputs,
+                                      depends_on=req.depends_on, max_retries=req.max_retries,
+                                      provider=req.provider, model=req.model,
+                                      workflow=req.workflow, seed=req.seed)
+        return job.to_dict()
+    except JobError as e:
+        raise HTTPException(404, e.to_dict())
+
+
+@app.get("/api/jobs/projects/{pid}/jobs")
+def jobs_list_jobs(pid: str):
+    """List all jobs in a project."""
+    try:
+        jobs = ORCHESTRATOR.list_jobs(pid)
+        return {"jobs": [j.to_dict() for j in jobs]}
+    except JobError as e:
+        raise HTTPException(404, e.to_dict())
+
+
+@app.get("/api/jobs/projects/{pid}/jobs/{jid}")
+def jobs_get_job(pid: str, jid: str):
+    """Get a single job's full state."""
+    try:
+        return ORCHESTRATOR.get_job(pid, jid).to_dict()
+    except JobError as e:
+        raise HTTPException(404, e.to_dict())
+
+
+@app.post("/api/jobs/projects/{pid}/jobs/{jid}/run")
+def jobs_run_job(pid: str, jid: str):
+    """Execute a job by type. Routes to the matching stage executor."""
+    try:
+        job = ORCHESTRATOR.get_job(pid, jid)
+    except JobError as e:
+        raise HTTPException(404, e.to_dict())
+    runners = {
+        JobType.CONTENT_PLAN: ORCHESTRATOR.run_content_plan,
+        JobType.SCENE_RESOLUTION: ORCHESTRATOR.run_scene_resolution,
+        JobType.VIDEO_SCENE: ORCHESTRATOR.run_video_scene,
+        JobType.VOICEOVER: ORCHESTRATOR.run_voiceover,
+        JobType.ASSEMBLY: ORCHESTRATOR.run_assembly,
+    }
+    runner = runners.get(job.job_type)
+    if runner is None:
+        raise HTTPException(400, {"code": "NO_RUNNER",
+                                  "detail": f"No executor for job type {job.job_type.value}"})
+    try:
+        result = runner(pid, jid)
+        return result.to_dict()
+    except VideoError as e:
+        raise HTTPException(502, e.to_dict())
+
+
+@app.post("/api/jobs/projects/{pid}/jobs/{jid}/retry")
+def jobs_retry_job(pid: str, jid: str):
+    """Retry a failed job (subject to retry policy)."""
+    try:
+        return ORCHESTRATOR.retry_job(pid, jid).to_dict()
+    except VideoError as e:
+        status = 409 if e.code in (TypedErrorCode.NON_RETRYABLE, TypedErrorCode.RETRY_EXHAUSTED,
+                                   TypedErrorCode.CANCEL_NOT_ALLOWED) else 404
+        raise HTTPException(status, e.to_dict())
+
+
+@app.post("/api/jobs/projects/{pid}/jobs/{jid}/cancel")
+def jobs_cancel_job(pid: str, jid: str):
+    """Cancel an active job."""
+    try:
+        return ORCHESTRATOR.cancel_job(pid, jid).to_dict()
+    except VideoError as e:
+        raise HTTPException(409, e.to_dict())
+
+
+@app.get("/api/jobs/projects/{pid}/progress")
+def jobs_get_progress(pid: str):
+    """Get project progress (derived from actual job states)."""
+    try:
+        return ORCHESTRATOR.get_progress(pid)
+    except JobError as e:
+        raise HTTPException(404, e.to_dict())
+
+
+@app.get("/api/jobs/projects/{pid}/jobs/{jid}/output")
+def jobs_get_output(pid: str, jid: str):
+    """Get a job's output (file path + QC metadata)."""
+    try:
+        job = ORCHESTRATOR.get_job(pid, jid)
+    except JobError as e:
+        raise HTTPException(404, e.to_dict())
+    if not job.output_path:
+        raise HTTPException(404, {"code": "NO_OUTPUT", "detail": "Job has no output yet."})
+    return {"output_path": job.output_path, "output_fingerprint": job.output_fingerprint,
+            "outputs": job.outputs, "state": job.state.value}
+
+
+@app.post("/api/jobs/recover")
+def jobs_recover_all():
+    """Startup recovery: re-validate abandoned RUNNING/QUEUED/RETRYING jobs."""
+    return {"recovered": {pid: [j.to_dict() for j in jobs]
+                          for pid, jobs in ORCHESTRATOR.recover_all().items()}}

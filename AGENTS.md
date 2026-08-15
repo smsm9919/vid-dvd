@@ -37,13 +37,73 @@ verification (no mocks/fake MP4/placeholders as runtime success).
 - Phase 8 (Wan 2.2 T2V/I2V + reference workflows): DONE, pushed
 - Phase 9 (voice, audio, music, SFX, captions): DONE, pushed
 - Phase 10 (professional video editing + final assembly): DONE, pushed
-- Phase 11+ : NOT STARTED (awaiting approval)
+- Phase 11 (production job orchestration + recovery): DONE, pushed
+- Phase 12+ : NOT STARTED (awaiting approval)
 
 ## Test Suite
-- 407 tests passing. Run: `python -m pytest tests/ -q`
+- 503 tests passing. Run: `python -m pytest tests/ -q`
 - FFmpeg editing/assembly runtime-verified (real FFmpeg 7.1.5 + libass).
-- TTS/music/SFX provider runtime NOT VERIFIED (no external provider
-  configured; Null providers raise NO_PROVIDER, never fake success).
+- Job orchestrator runtime-verified (real multi-scene project, state transitions,
+  caching/idempotency, dependency failure, recovery/resume, real FFmpeg assembly).
+- TTS/music/SFX/Wan provider runtime NOT VERIFIED (no external provider
+  configured; jobs FAIL with NO_PROVIDER, never fake success).
+
+## Phase 11 Architecture
+- `app/jobs/state.py`: JobState enum (18 states: DRAFT→PLANNING→PLANNED→
+  SCENE_RESOLUTION→SCENES_READY→VIDEO_GENERATION→VIDEO_GENERATED→AUDIO_GENERATION
+  →AUDIO_READY→ASSEMBLY→QUALITY_CONTROL→COMPLETED; FAILED, RETRYING, QUEUED,
+  RUNNING, CANCEL_REQUESTED→CANCELED). FORWARD map validates every transition.
+  assert_transition raises INVALID_TRANSITION. is_terminal/is_active/can_retry/
+  can_cancel helpers.
+- `app/jobs/models.py`: Job (job_id, project_id, job_type, state, parent_job_id,
+  scene_index, timestamps, retry_count, max_retries, provider/model/workflow/seed,
+  input_fingerprint, output_fingerprint, output_path, error_code/detail,
+  cancel_requested, provider_canceled, inputs, outputs, depends_on, last_backoff).
+  JobType (10 types: CONTENT_PLAN, AD_VARIANTS, SCENE_RESOLUTION, VIDEO_SCENE,
+  VOICEOVER, MUSIC, SFX, CAPTIONS, ASSEMBLY, FINAL_QC). fingerprint() (SHA-256,
+  order-stable), file_fingerprint() (size+content hash), is_retryable/
+  is_non_retryable (RETRYABLE_CODES/NON_RETRYABLE_CODES sets; unknown defaults
+  non-retryable). to_dict/from_dict serialization.
+- `app/jobs/retry.py`: RetryPolicy (base_delay, max_delay, max_retries, jitter;
+  compute_delay = bounded 2^n + jitter). should_retry (retryable + retries left),
+  record_retry (increments count, raises NON_RETRYABLE for deterministic errors,
+  RETRY_EXHAUSTED when exceeded), classify_error.
+- `app/jobs/cache.py`: CacheStore (file-backed JSON index; lookup re-validates:
+  exists/size>0/fingerprint match/metadata match/QC via verify_mp4/verify_audio;
+  evicts invalid entries; never trusts blindly). store() validates before caching.
+- `app/jobs/persistence.py`: JobStore (PROJECTS_DIR/<pid>/jobs.json, atomic write
+  via temp+rename, survives restart, rehydrates on load, creates empty index on
+  init so projects are discoverable). ProjectRegistry (lists projects with
+  jobs.json). Corrupt JSON starts fresh (no crash).
+- `app/jobs/dependencies.py`: check_dependencies (COMPLETED=ready, FAILED=blocked,
+  non-terminal=pending, missing=error), assert_dependencies (raises
+  DEPENDENCY_FAILED/DEPENDENCY_MISSING). compute_progress (from actual job states,
+  no fake %; overall=completed/total; stage=first in-progress; scene="N/M").
+  ConcurrencyLimiter (MAX_CONCURRENT_VIDEO_JOBS=2, MAX_CONCURRENT_AUDIO_JOBS=4,
+  conservative defaults; try_acquire/release).
+- `app/jobs/orchestrator.py`: Orchestrator (connects Content Brain→scene
+  continuity→Wan provider→voice→editing→QC without rewriting them). _run_with_retry
+  (cache check→QUEUED→RUNNING→fn()→validate output→cache→COMPLETED; retry on
+  retryable; fail on non-retryable). run_content_plan (local_content_plan, real
+  plan.json), run_scene_resolution (resolve_all_scenes), run_video_scene
+  (provider-aware: select_provider raises NO_PROVIDER — never fakes), run_voiceover
+  (NullTTSProvider → NO_PROVIDER), run_assembly (real FFmpeg export_video +
+  final_qc). recover_project (RUNNING/QUEUED/RETRYING → re-validate output →
+  COMPLETED or FAILED+NO_OUTPUT; never blindly marks abandoned jobs successful).
+  cancel_job (CANCEL_REQUESTED→CANCELED; provider_canceled=None when external
+  provider not actually stopped). retry_job (FAILED→RETRYING→QUEUED).
+- `app/core/errors.py`: added 10 Phase 11 codes: INVALID_TRANSITION,
+  DEPENDENCY_FAILED, DEPENDENCY_MISSING, JOB_NOT_FOUND, CACHE_INVALID,
+  RETRY_EXHAUSTED, NON_RETRYABLE, CANCEL_NOT_ALLOWED, CONCURRENCY_LIMIT,
+  PERSISTENCE_ERROR (additive).
+- API: 12 routes under /api/jobs/ (create/list/get projects, create/list/get/run/
+  retry/cancel jobs, progress, output, recover). Existing routes preserved.
+- Runtime verified: real 3-scene project (CONTENT_PLAN→SCENE_RESOLUTION→3×VIDEO_SCENE
+  →ASSEMBLY COMPLETED, 1080×1920, 12.0s, QC True); idempotency (cache reuse);
+  dependency failure (DEPENDENCY_FAILED); recovery (RUNNING→FAILED+NO_OUTPUT);
+  resumability (assembly after restart reuses cached videos); retry (retryable
+  QUEUED, non-retryable raises); cancel (CANCELED); NO_PROVIDER for voice/video
+  (never fake). Live API: all 12 endpoints verified.
 
 ## Phase 10 Architecture
 - `app/editing/timeline.py`: TimelineScene (scene_index, start, duration,
