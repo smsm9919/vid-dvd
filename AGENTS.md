@@ -36,13 +36,43 @@ verification (no mocks/fake MP4/placeholders as runtime success).
 - Phase 7 (scene continuity + references): DONE, pushed
 - Phase 8 (Wan 2.2 T2V/I2V + reference workflows): DONE, pushed
 - Phase 9 (voice, audio, music, SFX, captions): DONE, pushed
-- Phase 10+ : NOT STARTED (awaiting approval)
+- Phase 10 (professional video editing + final assembly): DONE, pushed
+- Phase 11+ : NOT STARTED (awaiting approval)
 
 ## Test Suite
-- 333 tests passing. Run: `python -m pytest tests/ -q`
-- FFmpeg audio mixing/captions runtime-verified (real FFmpeg 7.1.5).
+- 407 tests passing. Run: `python -m pytest tests/ -q`
+- FFmpeg editing/assembly runtime-verified (real FFmpeg 7.1.5 + libass).
 - TTS/music/SFX provider runtime NOT VERIFIED (no external provider
   configured; Null providers raise NO_PROVIDER, never fake success).
+
+## Phase 10 Architecture
+- `app/editing/timeline.py`: TimelineScene (scene_index, start, duration,
+  video/voice/music/sfx/ambience/caption/transition/brand), Timeline,
+  validate_timeline (sequential/contiguous/non-negative/no asset beyond scene/
+  transition fits), build_timeline_from_assets (first scene forced cut).
+- `app/editing/profiles.py`: ExportProfile (configurable width/height/fps/codec/
+  pixfmt/audio/bitrate/crf/preset/aspect), TIKTOK/INSTAGRAM_REELS/YOUTUBE_SHORTS/
+  YOUTUBE/SQUARE, Quality (low/medium/high → crf/preset), get_profile/register.
+- `app/editing/transitions.py`: TransitionType (cut/fade/crossfade/dip_to_black/
+  wipe), parse_transition (keyword → type+default_duration), TransitionSpec.validate
+  (bad type/negative/xfade-too-long), transition_filter (xfade/fadeblack/wipeleft).
+- `app/editing/compositor.py`: _normalize_scene_video (scale+pad preserve aspect,
+  fps, pixfmt, fade-in), _concat_scenes (re-encode concat), _build_ass_from_cues
+  (ASS script, Arabic/DE preserved), _burn_captions (subtitles filter; CAPTION_RENDER_ERROR
+  if libass unavailable), _apply_branding (logo overlay + drawtext CTA/watermark),
+  _mux_audio (apad+atrim to video duration — no silent video truncation), _silent_audio.
+- `app/editing/assembly.py`: ExportRequest, ExportResult, export_video (validate
+  timeline+assets → normalize → concat → burn captions → branding → audio → final QC;
+  never COMPLETED without QC-verified MP4; never overwrites source), validate_scene_assets.
+- `app/editing/qc.py`: final_qc (exists/size/duration/res/fps/codec/pixfmt/video+
+  audio stream/audio duration sync/profile conformance; FINAL_QC_FAILED).
+- `app/core/errors.py`: added MISSING_VIDEO_ASSET, MISSING_AUDIO_ASSET,
+  INVALID_TIMELINE, UNSUPPORTED_PROFILE, TRANSITION_ERROR, CAPTION_RENDER_ERROR,
+  EXPORT_FAILED, FINAL_QC_FAILED (additive).
+- Routes: /api/assembly/export, /api/assembly/profiles (existing routes preserved).
+- FFmpeg 7.1.5 with libass/fontconfig/freetype — burned-in captions render (incl.
+  Arabic RTL + German umlauts), frame-hash-verified.
+- A/V sync: short audio padded (apad), long audio trimmed (atrim) to video length.
 
 ## Phase 9 Architecture
 - `app/voice/tts.py`: TTSProvider ABC, VoiceRequest (validated), VoiceResult,

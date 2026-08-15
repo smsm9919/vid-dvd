@@ -27,6 +27,10 @@ from .audio.sfx import SFXRequest, NullSFXProvider
 from .audio.mixer import MixTrack, MixOptions, mix_audio, mix_scene_audio
 from .audio.qc import verify_audio
 from .captions.captions import CaptionFormat, CaptionStyle, generate_captions, write_captions
+from .editing.timeline import Timeline, TimelineScene, build_timeline_from_assets, validate_timeline
+from .editing.profiles import ExportProfile, Quality, get_profile, PROFILES
+from .editing.assembly import ExportRequest, ExportResult, export_video, validate_scene_assets
+from .editing.qc import final_qc
 
 app=FastAPI(title="VideoFactory Local", version="1.0.0")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -262,6 +266,61 @@ async def audio_qc(path: str):
         return {"status": "COMPLETED", "qc": qc}
     except VideoError as e:
         raise HTTPException(502, {"status": "FAILED", "error_code": e.code.value, "error_detail": e.detail})
+
+class AssemblyRequest(BaseModel):
+    scene_durations: list[float]
+    video_assets: list[str]
+    voice_assets: Optional[list[Optional[str]]] = None
+    voice_start_offsets: Optional[list[float]] = None
+    music_assets: Optional[list[list[str]]] = None
+    sfx_assets: Optional[list[list[str]]] = None
+    ambience_assets: Optional[list[Optional[str]]] = None
+    caption_texts: Optional[list[str]] = None
+    transitions: Optional[list[str]] = None
+    transition_durations: Optional[list[float]] = None
+    profile_name: str = "TIKTOK"
+    quality: str = "high"
+    include_captions: bool = False
+    caption_mode: str = "srt"
+    caption_cues: list[dict] = []
+    caption_style: dict = {}
+    include_branding: bool = False
+    brand: dict = {}
+    silent: bool = False
+    project_id: Optional[str] = None
+
+@app.post("/api/assembly/export")
+async def assembly_export(req: AssemblyRequest):
+    # Phase 10: full final assembly. Never COMPLETED without QC-verified MP4.
+    try:
+        from .editing.transitions import parse_transition
+        tl = build_timeline_from_assets(
+            req.scene_durations, [Path(p) for p in req.video_assets],
+            voice_assets=[[Path(p) if p else None for p in req.voice_assets] if req.voice_assets else None][0] if req.voice_assets else None,
+            voice_start_offsets=req.voice_start_offsets,
+            music_assets=[[Path(p) for p in m] for m in req.music_assets] if req.music_assets else None,
+            sfx_assets=[[Path(p) for p in s] for s in req.sfx_assets] if req.sfx_assets else None,
+            ambience_assets=[[Path(p) if p else None for p in req.ambience_assets] if req.ambience_assets else None][0] if req.ambience_assets else None,
+            caption_texts=req.caption_texts,
+            transitions=req.transitions, transition_durations=req.transition_durations,
+        )
+        exp_req = ExportRequest(
+            timeline=tl, profile_name=req.profile_name, quality=Quality(req.quality),
+            include_captions=req.include_captions, caption_mode=req.caption_mode,
+            caption_cues=req.caption_cues, caption_style=req.caption_style,
+            include_branding=req.include_branding, brand=req.brand,
+            silent=req.silent, project_id=req.project_id,
+        )
+        result = export_video(exp_req)
+        return result.to_dict()
+    except VideoError as e:
+        raise HTTPException(502, {"status": "FAILED", "error_code": e.code.value, "error_detail": e.detail})
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+@app.get("/api/assembly/profiles")
+async def assembly_profiles():
+    return {name: p.to_dict() for name, p in PROFILES.items()}
 
 @app.post("/api/projects")
 async def create_project(req: ProjectCreate):
