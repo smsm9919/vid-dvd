@@ -3,3 +3,9 @@ uvicorn[standard]>=0.34,<1
 httpx>=0.28,<1
 python-dotenv>=1.0,<2
 pydantic>=2.10,<3
+
+# Phase 13: optional free-first providers.
+# piper-tts is GPL-3.0 (OHF-Voice/piper1-gpl) and CPU-friendly. It is an OPT-IN
+# adapter — only loaded when PIPER_ENABLED=true. Install separately if you want
+# local TTS:  pip install piper-tts
+piper-tts>=1.7; python_version >= "3.9" and extra == "piper"
