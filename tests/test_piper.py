@@ -99,9 +99,15 @@ def test_piper_synthesize_raises_no_provider_when_disabled(monkeypatch, tmp_path
 
 
 def test_piper_no_default_arabic_voice_raises_capability(monkeypatch, tmp_path):
-    """Arabic has no default Piper voice unless configured → CAPABILITY_UNSUPPORTED."""
+    """Arabic has no default Piper voice unless configured → CAPABILITY_UNSUPPORTED.
+
+    The piper binary is mocked as present so this capability check is isolated
+    from the environment (the binary may not be installed in every test env).
+    The real-synthesis tests are separately gated by PIPER_RUNTIME.
+    """
     monkeypatch.setattr(config, "PIPER_ENABLED", True)
     monkeypatch.setattr(config, "PIPER_DEFAULT_VOICE_AR", "")
+    monkeypatch.setattr("app.voice.piper.shutil.which", lambda _: "/usr/local/bin/piper")
     p = PiperProvider(voices_dir=tmp_path / "voices")
     req = VoiceRequest(text="مرحبا", language="ar", output_format="wav")
     with pytest.raises(VideoError) as ei:
