@@ -21,6 +21,7 @@ from .scene.continuity import resolve_scene_context, resolve_all_scenes, validat
 from .scene.references import registry_from_plan
 from .providers.wan import WanProvider, GenerationOptions, WanMode
 from .voice.tts import NullTTSProvider, TTSProvider, VoiceRequest, select_tts_provider
+from .providers.router import build_tts_providers
 from .voice.voiceover import generate_scene_voiceover, generate_project_voiceover, validate_voice_timing
 from .audio.music import MusicRequest, NullMusicProvider
 from .audio.sfx import SFXRequest, NullSFXProvider
@@ -202,7 +203,7 @@ async def voice_generate(req: VoiceGenerateRequest):
             raise HTTPException(404, f"Scene {req.scene_index} not found.")
         if not scene.voiceover.line.strip():
             raise HTTPException(400, "Scene has no voiceover line.")
-        provider = select_tts_provider([])  # no real providers configured yet
+        provider = select_tts_provider(build_tts_providers())
         asset, result = generate_scene_voiceover(
             scene, plan, provider, project_id=req.project_id,
         )

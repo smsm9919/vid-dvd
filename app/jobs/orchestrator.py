@@ -397,9 +397,9 @@ class Orchestrator:
             self.limiter.release(JobType.VIDEO_SCENE)
 
     def run_voiceover(self, project_id: str, job_id: str) -> Job:
-        """Provider-aware TTS. FAILS with NO_PROVIDER when no real TTS provider
-        is configured. Deterministic test audio is NOT used here — that would
-        fake success. The job honestly reports NO_PROVIDER."""
+        """Provider-aware TTS. Uses the free-first router to select a real TTS
+        provider (Piper when enabled). FAILS with NO_PROVIDER when none is
+        configured — never fakes success with deterministic test audio."""
         proj = self.get_project(project_id)
         job = proj.store.require(job_id)
         if not self.limiter.try_acquire(JobType.VOICEOVER):
@@ -407,17 +407,48 @@ class Orchestrator:
                               f"Audio concurrency limit reached ({self.limiter.max_audio}).")
         try:
             def fn():
+                from ..providers.router import build_tts_providers
                 from ..voice.tts import NullTTSProvider, select_tts_provider
-                # No real providers configured in this environment.
-                provider = select_tts_provider([])
+                providers = build_tts_providers()
+                provider = select_tts_provider(providers)
                 if isinstance(provider, NullTTSProvider):
                     raise VideoError(
                         TypedErrorCode.NO_PROVIDER,
-                        "No real TTS provider configured (only NullTTSProvider).",
+                        "No real TTS provider configured. Enable Piper "
+                        "(PIPER_ENABLED=true, GPL-3.0) for free local TTS.",
                         context={"language": job.inputs.get("language", "en")})
-                # A real provider would synthesize here; not reached without config.
-                raise VideoError(TypedErrorCode.NO_PROVIDER,
-                                 "TTS provider not configured.")
+                # A real provider is available: synthesize the scene voiceover.
+                scene_index = int(job.inputs.get("scene_index", 0))
+                language = job.inputs.get("language", "en")
+                text = job.inputs.get("text", "").strip()
+                if not text:
+                    raise VideoError(
+                        TypedErrorCode.WORKFLOW_INVALID,
+                        "Voiceover job has no text to synthesize.",
+                        context={"scene_index": scene_index})
+                from ..voice.tts import VoiceRequest
+                from ..audio.qc import verify_audio
+                out_dir = OUTPUT_DIR / project_id / f"scene_{scene_index}" / "voice"
+                out_dir.mkdir(parents=True, exist_ok=True)
+                fmt = job.inputs.get("output_format", "wav")
+                dest = out_dir / f"scene_{scene_index}_voice.{fmt}"
+                request = VoiceRequest(text=text, language=language, output_format=fmt)
+                result = provider.synthesize(request, dest)
+                # QC: verify the audio is real and decodable before reporting success.
+                qc = verify_audio(result.path)
+                if not qc.get("ok"):
+                    raise VideoError(
+                        TypedErrorCode.INVALID_AUDIO,
+                        f"TTS output failed QC: {qc.get('error', 'failed')}",
+                        context={"path": str(result.path)})
+                job.output_path = str(result.path)
+                job.provider = provider.name
+                job.outputs = {
+                    "path": str(result.path), "duration": result.duration,
+                    "sample_rate": result.sample_rate, "voice": result.voice,
+                    "language": result.language, "provider": provider.name,
+                }
+                return result
             return self._run_with_retry(proj, job, fn)
         finally:
             self.limiter.release(JobType.VOICEOVER)

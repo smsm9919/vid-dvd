@@ -70,10 +70,23 @@ async def _comfyui_status() -> dict[str, Any]:
 
 
 def _tts_status() -> dict[str, Any]:
-    provider = select_tts_provider([])
+    from ..providers.router import build_tts_providers
+    provider = select_tts_provider(build_tts_providers())
     if isinstance(provider, NullTTSProvider):
-        return {"status": "NOT_CONFIGURED", "reason": "No real TTS provider registered (only NullTTSProvider)."}
-    return {"status": "READY", "provider": getattr(provider, "name", type(provider).__name__)}
+        # Distinguish Piper disabled vs uninstalled for actionable diagnostics.
+        from .. import config
+        if config.PIPER_ENABLED:
+            import shutil
+            if shutil.which("piper"):
+                return {"status": "NOT_CONFIGURED",
+                        "reason": "Piper enabled but no voice models found for the requested language."}
+            return {"status": "BLOCKED", "reason": "PIPER_ENABLED=true but piper binary not on PATH. Install: pip install piper-tts"}
+        return {"status": "NOT_CONFIGURED",
+                "reason": "No TTS provider configured. Enable Piper (PIPER_ENABLED=true, GPL-3.0) for free local TTS."}
+    meta = getattr(provider, "meta", None)
+    license_info = meta().license.to_dict() if callable(meta) else None
+    return {"status": "READY", "provider": getattr(provider, "name", type(provider).__name__),
+            "license": license_info}
 
 
 def _music_status() -> dict[str, Any]:
