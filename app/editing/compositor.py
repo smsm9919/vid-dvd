@@ -48,8 +48,53 @@ def captions_renderable() -> bool:
     return _ffmpeg_has_filter("subtitles")
 
 
+# --------------------------------------------------------------- bundled fonts
+# DejaVu Sans (Bitstream Vera License — free for commercial use) is bundled in
+# ``assets/fonts/`` so burned-in captions and branding text render
+# deterministically on any OS (including Windows) without fontconfig or a
+# globally installed font. See ``assets/fonts/LICENSE-DejaVu.txt``.
+_FONTS_DIR = Path(__file__).resolve().parent.parent.parent / "assets" / "fonts"
+
+# Maps a logical font family name to (regular, bold) bundled file paths.
+_BUNDLED_FONTS: dict[str, dict[str, Path]] = {
+    "DejaVu Sans": {
+        "regular": _FONTS_DIR / "DejaVuSans.ttf",
+        "bold": _FONTS_DIR / "DejaVuSans-Bold.ttf",
+    },
+}
+
+
+def _resolve_bundled_font(font_name: str, *, bold: bool = False) -> Optional[Path]:
+    """Resolve a logical font name to a bundled .ttf path.
+
+    Returns ``None`` if the name is not a bundled family or the file is missing.
+    Never touches the filesystem beyond a stat check — no fc-list, no registry.
+    """
+    entry = _BUNDLED_FONTS.get(font_name)
+    if entry is None:
+        return None
+    key = "bold" if bold else "regular"
+    path = entry.get(key) or entry.get("regular")
+    if path is not None and path.exists():
+        return path
+    return None
+
+
+def fonts_dir() -> Optional[Path]:
+    """Return the bundled fonts directory if it exists (for libass ``fontsdir``)."""
+    if _FONTS_DIR.is_dir():
+        return _FONTS_DIR
+    return None
+
+
 def font_available(font_name: str) -> bool:
-    """Check a font is resolvable via fontconfig."""
+    """Check whether a font is resolvable for burned-in captions / branding.
+
+    Resolves bundled fonts directly (cross-platform, no fc-list) first, then
+    falls back to fontconfig (``fc-list``) for system fonts on Linux/macOS.
+    """
+    if _resolve_bundled_font(font_name) is not None:
+        return True
     try:
         p = subprocess.run(["fc-list", f":family={font_name}"],
                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -218,6 +263,12 @@ def _burn_captions(video_path: Path, dest: Path, ass_script: Path,
     # Escape colons/backslashes in the path for the filter.
     esc = str(ass_script).replace("\\", "\\\\").replace(":", "\\:")
     vf = f"subtitles='{esc}'"
+    # Tell libass where bundled fonts live so rendering is deterministic
+    # cross-platform (no fontconfig/registry dependency).
+    fdir = fonts_dir()
+    if fdir is not None:
+        fdir_esc = str(fdir).replace("\\", "\\\\").replace(":", "\\:")
+        vf += f":fontsdir='{fdir_esc}'"
     cmd = ["ffmpeg", "-y", "-i", str(video_path), "-vf", vf,
            "-c:v", profile.video_codec, "-preset", profile.preset,
            "-crf", str(profile.crf), "-pix_fmt", profile.pixel_format,
@@ -252,13 +303,20 @@ def _apply_branding(video_path: Path, dest: Path, brand: dict[str, Any],
         n_extra = 1
     cta = brand.get("cta")
     watermark = brand.get("watermark")
+    # Resolve a bundled bold font for branding text so drawtext works
+    # cross-platform without fontconfig/registry lookups.
+    brand_font = _resolve_bundled_font("DejaVu Sans", bold=True) or \
+        _resolve_bundled_font("DejaVu Sans")
+    fontfile_opt = f":fontfile='{brand_font}'" if brand_font else ""
     texts = []
     if cta:
-        texts.append(("drawtext", f"text='{cta}':fontcolor=white:fontsize={int(profile.height*0.04)}:"
-                                   f"x=(w-text_w)/2:y=h-text_h-40:box=1:boxcolor=black@0.5"))
+        texts.append(("drawtext", f"text='{cta}':fontcolor=white:fontsize={int(profile.height*0.04)}"
+                                   f"{fontfile_opt}"
+                                   f":x=(w-text_w)/2:y=h-text_h-40:box=1:boxcolor=black@0.5"))
     if watermark:
-        texts.append(("drawtext", f"text='{watermark}':fontcolor=white@0.6:fontsize={int(profile.height*0.03)}:"
-                                  f"x=20:y=20"))
+        texts.append(("drawtext", f"text='{watermark}':fontcolor=white@0.6:fontsize={int(profile.height*0.03)}"
+                                  f"{fontfile_opt}"
+                                  f":x=20:y=20"))
     if logo and texts:
         # Apply drawtext after overlay.
         post = "[bg]" + ",".join(f"{t}={expr}" for t, expr in texts) + "[out]"
