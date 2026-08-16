@@ -29,6 +29,12 @@ output/
 projects/
 !projects/.gitkeep
 
+# Phase 13: downloaded stock assets + provider caches (never commit media)
+assets_cache/
+assets_library/
+# Piper voice models (multi-GB, downloaded on demand, never bundled)
+models/
+
 # OS / editor
 .DS_Store
 Thumbs.db
