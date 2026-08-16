@@ -39,15 +39,27 @@ verification (no mocks/fake MP4/placeholders as runtime success).
 - Phase 10 (professional video editing + final assembly): DONE, pushed
 - Phase 11 (production job orchestration + recovery): DONE, pushed
 - Phase 12 (production control center / dashboard): DONE, pushed
-- Phase 13 (free-first multi-provider production hub): IN PROGRESS
+- Phase 13 (free-first multi-provider production hub): DONE
   - M1 Wikimedia keyless stock provider: DONE (commit f1521b2)
   - M2 Kokoro-82M TTS provider: DONE (commit cadbe8f)
   - M3 Stock video → orchestrator fallback: DONE (commit b42a6e2)
   - M4 End-to-end real production (stock+Kokoro+FFmpeg): DONE (commit 22f7d0d)
-  - M5-M6: pending (dashboard multi-provider states, docs)
+  - M5 Dashboard integration: DONE — provider_panel reports Wikimedia stock
+    (available+license), Kokoro TTS (READY Apache 2.0), router status,
+    free_first policy; production_readiness VIDEO/VOICE READY via stock+Kokoro;
+    dashboard HTML renders FREE-FIRST HUB + stock + readiness panels. Added
+    _kokoro_block_reason() for actionable Kokoro-enabled-but-blocked diagnostics.
+  - M6 Documentation: DONE — README rewritten (free-first + AI-gen paths,
+    setup, verified provider licenses), .env.example documents all providers.
+  - Runtime verified (fresh run): CONTENT_PLAN→SCENE_RESOLUTION→3×VIDEO_SCENE
+    (real Wikimedia CC BY-SA 4.0 stock, transcoded via FFmpeg)→3×VOICEOVER
+    (real Kokoro af_heart, 24kHz)→ASSEMBLY→FINAL_QC. Final MP4: 1080×1920,
+    42.7s, h264/aac, QC ok=true. No API keys, no GPU, no mocks/fakes.
+    Evidence: /tmp/e2e_evidence/evidence.json
 
 ## Test Suite
-- 550 tests passing. Run: `python -m pytest tests/ -q`
+- 668 tests passing (1 pre-existing piper test failure unrelated to Phase 13).
+  Run: `python -m pytest tests/ -q`
 - Dashboard runtime-verified against live backend (create project, plan, 7 variants,
   scene board + continuity, job states, progress, controlled NO_PROVIDER failure,
   retry-409, real FFmpeg assembly, final QC-verified MP4, asset QC, error center,

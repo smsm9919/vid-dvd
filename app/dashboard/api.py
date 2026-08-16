@@ -73,8 +73,13 @@ def _tts_status() -> dict[str, Any]:
     from ..providers.router import build_tts_providers
     provider = select_tts_provider(build_tts_providers())
     if isinstance(provider, NullTTSProvider):
-        # Distinguish Piper disabled vs uninstalled for actionable diagnostics.
+        # Distinguish Kokoro vs Piper diagnostics for actionable guidance.
         from .. import config
+        kokoro_reason = None
+        if config.KOKORO_ENABLED:
+            kokoro_reason = _kokoro_block_reason()
+        if kokoro_reason is not None:
+            return {"status": "BLOCKED", "reason": kokoro_reason}
         if config.PIPER_ENABLED:
             import shutil
             if shutil.which("piper"):
@@ -82,11 +87,31 @@ def _tts_status() -> dict[str, Any]:
                         "reason": "Piper enabled but no voice models found for the requested language."}
             return {"status": "BLOCKED", "reason": "PIPER_ENABLED=true but piper binary not on PATH. Install: pip install piper-tts"}
         return {"status": "NOT_CONFIGURED",
-                "reason": "No TTS provider configured. Enable Piper (PIPER_ENABLED=true, GPL-3.0) for free local TTS."}
+                "reason": "No TTS provider configured. Enable Kokoro (KOKORO_ENABLED=true, Apache 2.0, "
+                          "preferred) or Piper (PIPER_ENABLED=true, GPL-3.0) for free local TTS."}
     meta = getattr(provider, "meta", None)
     license_info = meta().license.to_dict() if callable(meta) else None
     return {"status": "READY", "provider": getattr(provider, "name", type(provider).__name__),
             "license": license_info}
+
+
+def _kokoro_block_reason() -> Optional[str]:
+    """Honest reason why Kokoro is enabled but unavailable (never fabricated)."""
+    from .. import config
+    model_dir = config.KOKORO_MODEL_DIR
+    model_path = model_dir / config.KOKORO_MODEL_FILE
+    voices_path = model_dir / config.KOKORO_VOICES_FILE
+    if not model_path.exists():
+        return (f"KOKORO_ENABLED=true but model file missing: {model_path}. "
+                "Download kokoro-v1.0.int8.onnx from https://huggingface.co/hexgrad/Kokoro-82M")
+    if not voices_path.exists():
+        return (f"KOKORO_ENABLED=true but voices file missing: {voices_path}. "
+                "Download voices-v1.0.bin from https://huggingface.co/hexgrad/Kokoro-82M")
+    try:
+        import kokoro_onnx  # noqa: F401
+    except ImportError:
+        return "KOKORO_ENABLED=true but kokoro-onnx not installed. Install: pip install kokoro-onnx soundfile"
+    return None
 
 
 def _music_status() -> dict[str, Any]:
