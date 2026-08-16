@@ -180,6 +180,14 @@ verification (no mocks/fake MP4/placeholders as runtime success).
   font_available() (bundled-first, fc-list fallback; no Windows registry/fc-list
   dependency). DejaVu Sans (regular+bold) bundled in assets/fonts/ (Bitstream
   Vera License).
+  FFmpeg filtergraph path escaping: _ffmpeg_filter_quote_path() escapes
+  backslash first, then : , ; [ ] ' and wraps in single quotes — required so
+  Windows drive letters/backslashes (C:\Users\...) in drawtext fontfile and
+  subtitles fontsdir do not break filter parsing. Applied consistently in
+  _apply_branding (fontfile) and _burn_captions (ass_script path + fontsdir).
+  Regression guards: tests/test_editing.py test_ffmpeg_filter_quote_path_windows_safe
+  + test_ffmpeg_filter_quote_path_parses_in_real_ffmpeg (real FFmpeg parse of
+  simulated Windows paths). pytest declared in requirements.txt for clean-checkout repro.
 - `app/editing/assembly.py`: ExportRequest, ExportResult, export_video (validate
   timeline+assets → normalize → concat → burn captions → branding → audio → final QC;
   never COMPLETED without QC-verified MP4; never overwrites source), validate_scene_assets.

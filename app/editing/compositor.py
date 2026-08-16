@@ -92,6 +92,7 @@ def font_available(font_name: str) -> bool:
 
     Resolves bundled fonts directly (cross-platform, no fc-list) first, then
     falls back to fontconfig (``fc-list``) for system fonts on Linux/macOS.
+    Windows never needs fc-list for bundled DejaVu fonts.
     """
     if _resolve_bundled_font(font_name) is not None:
         return True
@@ -101,6 +102,31 @@ def font_available(font_name: str) -> bool:
         return bool(p.stdout.strip())
     except FileNotFoundError:
         return False
+
+
+# --------------------------------------------------------------- filtergraph escaping
+def _ffmpeg_filter_quote_path(path: Path | str) -> str:
+    """Quote a filesystem path for use as an FFmpeg filter option value.
+
+    FFmpeg filtergraphs use ``:`` to separate a filter's options and ``;``/``,
+    to separate filters/graph nodes, so any literal occurrence of those
+    characters inside an option value must be escaped. Backslashes in Windows
+    paths and drive letters (``C:\\Users\\...``) are the common breakage: an
+    unescaped ``:`` splits the option even inside single quotes.
+
+    The escaping is applied in two layers per the FFmpeg "Quoting and escaping"
+    rules: (1) backslashes are escaped first so each ``\\`` becomes ``\\\\``;
+    (2) the remaining special characters (``: , ; [ ] '``) are escaped with a
+    leading backslash; (3) the whole value is wrapped in single quotes. This is
+    deterministic, cross-platform, and required for ``drawtext=fontfile`` and
+    ``subtitles``/``fontsdir`` on Windows (no fontconfig/registry dependency).
+    """
+    s = str(path)
+    # Backslash first so we do not double-escape the backslashes we add below.
+    s = s.replace("\\", "\\\\")
+    for ch in (":", ",", ";", "[", "]", "'"):
+        s = s.replace(ch, "\\" + ch)
+    return f"'{s}'"
 
 
 def _normalize_scene_video(src: Path, dest: Path, profile: ExportProfile,
@@ -260,15 +286,13 @@ def _burn_captions(video_path: Path, dest: Path, ass_script: Path,
             "Install ffmpeg with libass/fontconfig support.",
             context={"filter": "subtitles"},
         )
-    # Escape colons/backslashes in the path for the filter.
-    esc = str(ass_script).replace("\\", "\\\\").replace(":", "\\:")
-    vf = f"subtitles='{esc}'"
+    # Escape the path for the filtergraph (Windows drive letters / backslashes).
+    vf = f"subtitles={_ffmpeg_filter_quote_path(ass_script)}"
     # Tell libass where bundled fonts live so rendering is deterministic
     # cross-platform (no fontconfig/registry dependency).
     fdir = fonts_dir()
     if fdir is not None:
-        fdir_esc = str(fdir).replace("\\", "\\\\").replace(":", "\\:")
-        vf += f":fontsdir='{fdir_esc}'"
+        vf += f":fontsdir={_ffmpeg_filter_quote_path(fdir)}"
     cmd = ["ffmpeg", "-y", "-i", str(video_path), "-vf", vf,
            "-c:v", profile.video_codec, "-preset", profile.preset,
            "-crf", str(profile.crf), "-pix_fmt", profile.pixel_format,
@@ -307,7 +331,7 @@ def _apply_branding(video_path: Path, dest: Path, brand: dict[str, Any],
     # cross-platform without fontconfig/registry lookups.
     brand_font = _resolve_bundled_font("DejaVu Sans", bold=True) or \
         _resolve_bundled_font("DejaVu Sans")
-    fontfile_opt = f":fontfile='{brand_font}'" if brand_font else ""
+    fontfile_opt = f":fontfile={_ffmpeg_filter_quote_path(brand_font)}" if brand_font else ""
     texts = []
     if cta:
         texts.append(("drawtext", f"text='{cta}':fontcolor=white:fontsize={int(profile.height*0.04)}"

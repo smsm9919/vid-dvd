@@ -29,7 +29,7 @@ from app.editing.transitions import (
     SUPPORTED_TRANSITIONS, TransitionSpec, TransitionType, parse_transition, transition_filter,
 )
 from app.editing.compositor import (
-    _build_ass_from_cues, captions_renderable, font_available,
+    _build_ass_from_cues, _ffmpeg_filter_quote_path, captions_renderable, font_available,
 )
 from app.editing.assembly import (
     ExportRequest, ExportResult, export_video, validate_scene_assets,
@@ -333,6 +333,59 @@ def test_captions_renderable():
 
 def test_font_available_dejavu():
     assert font_available("DejaVu Sans") is True
+
+
+def test_resolve_bundled_bold_font_exists():
+    # Bold resolution for branding drawtext must point at a real bundled file.
+    from app.editing.compositor import _resolve_bundled_font, fonts_dir
+    regular = _resolve_bundled_font("DejaVu Sans")
+    bold = _resolve_bundled_font("DejaVu Sans", bold=True)
+    assert regular is not None and regular.exists()
+    assert bold is not None and bold.exists()
+    assert bold != regular
+    assert fonts_dir() is not None and fonts_dir().is_dir()
+
+
+def test_ffmpeg_filter_quote_path_windows_safe():
+    # The escaping helper must produce FFmpeg-filtergraph-safe option values for
+    # Windows drive letters, backslashes, spaces, parens and apostrophes.
+    cases = {
+        r"C:\Users\foo\assets\fonts\DejaVuSans-Bold.ttf":
+            r"'C\:\\Users\\foo\\assets\\fonts\\DejaVuSans-Bold.ttf'",
+        r"C:\Users\My (Dir)\font.ttf":
+            r"'C\:\\Users\\My (Dir)\\font.ttf'",
+        r"C:\Users\o'brien\font.ttf":
+            r"'C\:\\Users\\o\'brien\\font.ttf'",
+    }
+    for raw, expected in cases.items():
+        assert _ffmpeg_filter_quote_path(raw) == expected, raw
+    # A POSIX path (no special chars) is wrapped in single quotes, unchanged.
+    assert _ffmpeg_filter_quote_path("/opt/fonts/DejaVu.ttf") == "'/opt/fonts/DejaVu.ttf'"
+
+
+def test_ffmpeg_filter_quote_path_parses_in_real_ffmpeg():
+    # Real FFmpeg must PARSE filtergraphs that embed simulated Windows font
+    # paths through the helper (no "Error parsing filterchain"). This is the
+    # runtime regression guard for the Windows-path bug. It does not require
+    # the font file to exist — parse-level acceptance is what failed before.
+    import shutil
+    if not shutil.which("ffmpeg"):
+        pytest.skip("ffmpeg not installed")
+    simulated = [
+        r"C:\Users\foo\assets\fonts\DejaVuSans-Bold.ttf",          # drive + backslashes
+        r"C:\Users\My (Dir)\assets\fonts\DejaVuSans-Bold.ttf",      # spaces + parens
+        r"C:\Users\o'brien\assets\fonts\DejaVuSans-Bold.ttf",       # apostrophe
+    ]
+    for path in simulated:
+        vf = (f"drawtext=text='X':fontcolor=white:fontsize=40:"
+              f"fontfile={_ffmpeg_filter_quote_path(path)}:x=10:y=10")
+        p = subprocess.run(
+            ["ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=blue:s=320x240:d=1",
+             "-vf", vf, "-frames:v", "1", "-an", "-f", "null", "-"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        # "Error parsing" is the exact symptom of the Windows-path bug; the file
+        # not existing surfaces as a different drawtext error, never a parse error.
+        assert "Error parsing" not in p.stderr, f"FFmpeg failed to parse escaped path {path!r}\n{p.stderr[-400:]}"
 
 
 def test_build_ass_from_cues_structure():
