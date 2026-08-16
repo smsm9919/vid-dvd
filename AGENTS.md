@@ -172,9 +172,14 @@ verification (no mocks/fake MP4/placeholders as runtime success).
   (bad type/negative/xfade-too-long), transition_filter (xfade/fadeblack/wipeleft).
 - `app/editing/compositor.py`: _normalize_scene_video (scale+pad preserve aspect,
   fps, pixfmt, fade-in), _concat_scenes (re-encode concat), _build_ass_from_cues
-  (ASS script, Arabic/DE preserved), _burn_captions (subtitles filter; CAPTION_RENDER_ERROR
-  if libass unavailable), _apply_branding (logo overlay + drawtext CTA/watermark),
+  (ASS script, Arabic/DE preserved), _burn_captions (subtitles filter + fontsdir
+  from bundled fonts; CAPTION_RENDER_ERROR if libass unavailable), _apply_branding
+  (logo overlay + drawtext CTA/watermark with fontfile from bundled bold font),
   _mux_audio (apad+atrim to video duration — no silent video truncation), _silent_audio.
+  Cross-platform font resolution: _resolve_bundled_font(), fonts_dir(),
+  font_available() (bundled-first, fc-list fallback; no Windows registry/fc-list
+  dependency). DejaVu Sans (regular+bold) bundled in assets/fonts/ (Bitstream
+  Vera License).
 - `app/editing/assembly.py`: ExportRequest, ExportResult, export_video (validate
   timeline+assets → normalize → concat → burn captions → branding → audio → final QC;
   never COMPLETED without QC-verified MP4; never overwrites source), validate_scene_assets.
