@@ -343,6 +343,26 @@ class Orchestrator:
     def run_scene_resolution(self, project_id: str, job_id: str) -> Job:
         proj = self.get_project(project_id)
         job = proj.store.require(job_id)
+        # Lazy-load the plan from plan.json if not in memory (e.g. after a
+        # cache-reuse of CONTENT_PLAN, which bypasses fn() that sets proj.plan).
+        if proj.plan is None:
+            plan_path = proj.assets_dir / "plan.json"
+            if plan_path.exists():
+                from ..brain.models import ProductionPlan
+                try:
+                    proj.plan = ProductionPlan.model_validate_json(plan_path.read_text("utf-8"))
+                except Exception:
+                    pass
+        # Lazy-load scene contexts by re-running resolution if not in memory
+        # (e.g. after a cache-reuse of SCENE_RESOLUTION, which bypasses fn()).
+        # resolve_all_scenes is deterministic from the plan, so this is safe.
+        if not proj.scene_contexts and proj.plan is not None:
+            try:
+                ctxs = resolve_all_scenes(proj.plan)
+                for i, ctx in enumerate(ctxs, start=1):
+                    proj.scene_contexts[i] = ctx
+            except Exception:
+                pass
         if proj.plan is None:
             return self._fail(proj, job, TypedErrorCode.DEPENDENCY_MISSING.value,
                               "ProductionPlan not available; run CONTENT_PLAN first.")
@@ -432,55 +452,110 @@ class Orchestrator:
             orient = StockOrientation.LANDSCAPE
         else:
             orient = None
-        req = StockSearchRequest(
-            query=prompt,
-            media_type=StockMediaType.VIDEO,
-            orientation=orient,
-            min_duration=max(1.0, duration - 1.0),
-            per_page=10, page=1, language="en",
-        )
-        # Try each available stock provider until one returns usable hits.
+        # Extract candidate search queries from the structured visual prompt.
+        # Stock search works best with short visual noun phrases; the prompt may
+        # be a long [IDENTITY]...[ACTION]... string with ad copy that stock
+        # search can't match. Build a list of candidate queries (best first).
+        candidates = self._extract_stock_queries(prompt)
+        # Always include a generic fallback last.
+        if not candidates or candidates[-1] != "nature landscape":
+            candidates.append("nature landscape")
         last_err = None
         for provider in providers:
-            try:
-                hits = provider.search(req)
-            except VideoError as e:
-                last_err = e
-                continue
-            # Filter to hits that allow commercial use (free-first policy).
-            usable = [h for h in hits
-                      if h.license_commercial_use in ("allowed", "unknown")]
-            if not usable:
-                continue
-            hit = usable[0]
-            dest = proj.assets_dir / f"scene_{job.inputs.get('scene_index', 0)}_{hit.asset_id}.mp4"
-            result = provider.download(hit, destination=dest)
-            # Verify the downloaded file is a real, decodable MP4.
-            verify_mp4(result.path)
-            job.provider = provider.name
-            log("STOCK_VIDEO", f"downloaded {result.path.name}",
-                provider=provider.name, license=hit.license_name,
-                bytes_size=result.bytes_size)
-            return str(result.path), {
-                "source": "stock_footage",
-                "stock_provider": provider.name,
-                "stock_asset_id": hit.asset_id,
-                "stock_page_url": hit.page_url,
-                "license_name": hit.license_name,
-                "license_commercial_use": hit.license_commercial_use,
-                "attribution_required": hit.attribution_required,
-                "attribution_text": hit.attribution_text,
-                "author": hit.author,
-                "sha256": result.sha256,
-            }
-        # No provider yielded usable hits.
+            for query in candidates:
+                req = StockSearchRequest(
+                    query=query,
+                    media_type=StockMediaType.VIDEO,
+                    orientation=orient,
+                    min_duration=max(1.0, duration - 1.0),
+                    per_page=10, page=1, language="en",
+                )
+                try:
+                    hits = provider.search(req)
+                except VideoError as e:
+                    last_err = e
+                    continue
+                # Filter to hits that allow commercial use (free-first policy).
+                usable = [h for h in hits
+                          if h.license_commercial_use in ("allowed", "unknown")]
+                if not usable:
+                    continue
+                hit = usable[0]
+                dest = proj.assets_dir / f"scene_{job.inputs.get('scene_index', 0)}_{hit.asset_id}.mp4"
+                result = provider.download(hit, destination=dest)
+                # Verify the downloaded file is a real, decodable MP4.
+                verify_mp4(result.path)
+                job.provider = provider.name
+                log("STOCK_VIDEO", f"downloaded {result.path.name}",
+                    provider=provider.name, license=hit.license_name,
+                    bytes_size=result.bytes_size, query=query)
+                return str(result.path), {
+                    "source": "stock_footage",
+                    "stock_provider": provider.name,
+                    "stock_asset_id": hit.asset_id,
+                    "stock_page_url": hit.page_url,
+                    "license_name": hit.license_name,
+                    "license_commercial_use": hit.license_commercial_use,
+                    "attribution_required": hit.attribution_required,
+                    "attribution_text": hit.attribution_text,
+                    "author": hit.author,
+                    "sha256": result.sha256,
+                    "query": query,
+                }
+        # No provider/query yielded usable hits.
         raise VideoError(
             TypedErrorCode.NO_OUTPUT,
-            f"Stock video search yielded no usable hits for prompt: '{prompt[:80]}'. "
+            f"Stock video search yielded no usable hits (tried {len(candidates)} queries). "
             f"Last error: {last_err}" if last_err else
-            f"Stock video search yielded no usable hits for prompt: '{prompt[:80]}'.",
-            context={"query": prompt[:200], "orientation": orient.value if orient else None},
+            f"Stock video search yielded no usable hits (tried {len(candidates)} queries).",
+            context={"queries": candidates, "original_prompt": prompt[:200],
+                     "orientation": orient.value if orient else None},
         )
+
+    @staticmethod
+    def _extract_stock_queries(prompt: str) -> list[str]:
+        """Extract candidate stock-search queries from a structured visual prompt.
+
+        Returns a list of short noun phrases ordered by visual relevance.
+        Stock search (Wikimedia/Pexels) needs simple terms, but scene continuity
+        prompts are long structured strings with ad copy. We extract from
+        ENVIRONMENT/DETAILS/ACTION sections and also try the raw idea keywords.
+        """
+        import re
+        # Non-visual filler words to strip.
+        filler = {
+            "consistent", "environment", "for", "the", "a", "an", "image",
+            "introducing", "showing", "shown", "stable", "packaging", "colors",
+            "signature", "across", "all", "scenes", "unless", "narrative",
+            "explicitly", "changes", "it", "product", "character", "subject",
+            "same", "facial", "features", "build", "wardrobe", "clothing",
+            "human", "striking", "curiosity", "driving", "powerful", "hook",
+            "app", "relaxation",
+        }
+        queries: list[str] = []
+
+        def _clean(text: str) -> str:
+            text = re.sub(r"\([^)]*\)", "", text)
+            text = re.sub(r"^(?:Powerful hook|Hook|CTA|Call to action|Reveal|"
+                          r"Climax|Payoff|Button|Logo|Tagline|motion|transition)\s*:?\s*",
+                          "", text, flags=re.IGNORECASE)
+            words = [w.strip(" ,.;:()'\"") for w in text.split()]
+            words = [w for w in words if w and w.lower() not in filler
+                     and not w.startswith("'") and len(w) > 1]
+            return " ".join(words[:6]).strip()
+
+        for tag in ("ENVIRONMENT", "DETAILS", "ACTION"):
+            m = re.search(rf"\[{tag}\]\s*(.+?)(?:\[|$)", prompt, re.IGNORECASE | re.DOTALL)
+            if m:
+                q = _clean(m.group(1))
+                if len(q) >= 3 and q not in queries:
+                    queries.append(q)
+        # Also try extracting noun-like keywords from the whole prompt.
+        clean = re.sub(r"\[[A-Z]+\]", "", prompt)
+        q = _clean(clean)
+        if len(q) >= 3 and q not in queries:
+            queries.append(q)
+        return queries
 
     def run_voiceover(self, project_id: str, job_id: str) -> Job:
         """Provider-aware TTS. Uses the free-first router to select a real TTS
@@ -527,14 +602,13 @@ class Orchestrator:
                         TypedErrorCode.INVALID_AUDIO,
                         f"TTS output failed QC: {qc.get('error', 'failed')}",
                         context={"path": str(result.path)})
-                job.output_path = str(result.path)
                 job.provider = provider.name
-                job.outputs = {
+                outs = {
                     "path": str(result.path), "duration": result.duration,
                     "sample_rate": result.sample_rate, "voice": result.voice,
                     "language": result.language, "provider": provider.name,
                 }
-                return result
+                return str(result.path), outs
             return self._run_with_retry(proj, job, fn)
         finally:
             self.limiter.release(JobType.VOICEOVER)
@@ -557,11 +631,28 @@ class Orchestrator:
                                  "No completed VIDEO_SCENE jobs to assemble.")
             durations = [j.inputs.get("duration", 4.0) for j in video_jobs]
             videos = [Path(j.output_path) for j in video_jobs]
-            tl = build_timeline_from_assets(durations, videos)
+            # Collect completed VOICEOVER jobs (optional — only when not silent).
+            silent = job.inputs.get("silent", True)
+            voice_assets = None
+            caption_texts = None
+            if not silent:
+                voice_jobs = {int(j.scene_index or 0): j for j in
+                              proj.store.by_type(JobType.VOICEOVER.value)
+                              if j.state is JobState.COMPLETED and j.output_path}
+                voice_assets = []
+                caption_texts = []
+                for vj in video_jobs:
+                    si = int(vj.scene_index or 0)
+                    vj_voice = voice_jobs.get(si)
+                    voice_assets.append(Path(vj_voice.output_path) if vj_voice else None)
+                    caption_texts.append(vj.inputs.get("text", ""))
+            tl = build_timeline_from_assets(durations, videos,
+                                            voice_assets=voice_assets,
+                                            caption_texts=caption_texts)
             profile_name = job.inputs.get("profile_name", "TIKTOK")
             req = ExportRequest(timeline=tl, profile_name=profile_name,
                                 quality=Quality(job.inputs.get("quality", "high")),
-                                silent=job.inputs.get("silent", True),
+                                silent=silent,
                                 project_id=project_id)
             out_dir = proj.assets_dir / "final"
             result = export_video(req, output_dir=out_dir)
