@@ -335,7 +335,14 @@ class TestRetryCancel:
 # 8. ERROR CENTER
 # ===============================================================
 class TestErrorCenter:
-    def test_failed_jobs_shown_in_overview(self, client, tmp_projects):
+    def test_failed_jobs_shown_in_overview(self, client, tmp_projects, monkeypatch):
+        # Disable ALL stock providers so VIDEO_SCENE fails with NO_PROVIDER
+        # (Wikimedia is keyless/always-available otherwise).
+        import app.providers.wikimedia as wm
+        from app import config
+        monkeypatch.setattr(wm.WikimediaCommonsProvider, "available", property(lambda self: False))
+        monkeypatch.setattr(config, "PEXELS_API_KEY", "")
+        monkeypatch.setattr(config, "PIXABAY_API_KEY", "")
         r = client.post("/api/dashboard/projects", json={"idea": "lion", "duration_seconds": 12})
         pid = r.json()["project_id"]
         # Create a video_scene job that will fail with NO_PROVIDER.
@@ -352,7 +359,13 @@ class TestErrorCenter:
         assert len(failed) >= 1
         assert failed[0]["error_code"] == "NO_PROVIDER"
 
-    def test_error_has_detail_and_code(self, client, tmp_projects):
+    def test_error_has_detail_and_code(self, client, tmp_projects, monkeypatch):
+        # Disable stock providers to guarantee a FAILED job with error code/detail.
+        import app.providers.wikimedia as wm
+        from app import config
+        monkeypatch.setattr(wm.WikimediaCommonsProvider, "available", property(lambda self: False))
+        monkeypatch.setattr(config, "PEXELS_API_KEY", "")
+        monkeypatch.setattr(config, "PIXABAY_API_KEY", "")
         r = client.post("/api/dashboard/projects", json={"idea": "lion", "duration_seconds": 12})
         pid = r.json()["project_id"]
         r2 = client.post(f"/api/jobs/projects/{pid}/jobs", json={

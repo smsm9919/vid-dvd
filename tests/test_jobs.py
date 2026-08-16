@@ -899,12 +899,89 @@ class TestOutputIntegrity:
 # 14. PROVIDER UNAVAILABLE
 # ===============================================================
 class TestProviderUnavailable:
-    def test_video_scene_fails_no_provider(self, orch):
-        """VIDEO_SCENE must FAIL with NO_PROVIDER when no real provider exists.
-        Never fake a successful generation."""
+    def test_video_scene_fails_no_provider(self, orch, monkeypatch):
+        """VIDEO_SCENE must FAIL with NO_PROVIDER when NO AI provider AND NO
+        stock provider is available. Never fake a successful generation."""
+        # Disable ALL stock providers (including keyless Wikimedia) to test the
+        # true no-provider path.
+        import app.providers.wikimedia as wm
+        monkeypatch.setattr(wm.WikimediaCommonsProvider, "available", property(lambda self: False))
+        from app import config as cfg
+        monkeypatch.setattr(cfg, "PEXELS_API_KEY", "")
+        monkeypatch.setattr(cfg, "PIXABAY_API_KEY", "")
         proj = orch.create_project("p1")
         job = orch.create_job("p1", JobType.VIDEO_SCENE, scene_index=1,
                               inputs={"scene_index": 1, "duration": 4.0, "prompt": "lion"})
         result = orch.run_video_scene("p1", job.job_id)
         assert result.state is JobState.FAILED
         assert result.error_code == "NO_PROVIDER"
+
+
+# ===============================================================
+# 15. STOCK VIDEO FALLBACK (Phase 13 — real stock footage into assembly)
+# ===============================================================
+def _stock_available() -> bool:
+    from app.providers.stock_adapters import build_stock_providers
+    return any(p.available for p in build_stock_providers())
+
+
+class TestStockVideoFallback:
+    """When no AI video provider is configured, the orchestrator falls back to
+    real stock footage (Wikimedia/Pexels/Pixabay). These are LIVE runtime tests
+    that download real media — skipped when no stock provider is available."""
+
+    @pytest.mark.skipif(not (_stock_available() and shutil.which("ffprobe")),
+                        reason="No stock provider available or ffprobe missing")
+    def test_stock_fallback_downloads_real_video(self, orch):
+        """VIDEO_SCENE with no AI provider falls back to real stock footage.
+        The downloaded MP4 must be real, non-empty, and FFmpeg-decodable."""
+        proj = orch.create_project("p1")
+        job = orch.create_job("p1", JobType.VIDEO_SCENE, scene_index=0,
+                              inputs={"scene_index": 0, "duration": 4.0,
+                                      "prompt": "ocean waves", "width": 1080, "height": 1920})
+        result = orch.run_video_scene("p1", job.job_id)
+        # The stock fallback should succeed (COMPLETED) with a real video.
+        assert result.state is JobState.COMPLETED, \
+            f"Expected COMPLETED, got {result.state} ({result.error_code}: {result.error_detail})"
+        assert result.output_path
+        out = Path(result.output_path)
+        assert out.exists(), f"Output {out} does not exist"
+        assert out.stat().st_size > 1000, "Output is too small (likely empty/fake)"
+        # Verify with ffprobe independently.
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries",
+             "stream=codec_name,width,height:format=duration", "-of", "json", str(out)],
+            capture_output=True, text=True)
+        import json
+        d = json.loads(probe.stdout)
+        assert "streams" in d and len(d["streams"]) > 0
+        s = d["streams"][0]
+        assert s["codec_name"] == "h264"
+        assert float(d["format"]["duration"]) > 0.5
+        # Provenance: the job outputs must record stock source + license.
+        assert result.outputs.get("source") == "stock_footage"
+        assert result.outputs.get("stock_provider")
+        assert result.outputs.get("license_name")
+        assert result.outputs.get("sha256")
+        print(f"REAL stock video: {out.name}, {out.stat().st_size} bytes, "
+              f"{d['format']['duration']}s, {s['width']}x{s['height']}, "
+              f"license={result.outputs['license_name']}")
+
+    def test_stock_fallback_provenance_recorded(self, orch):
+        """When stock fallback is used, full license provenance is recorded in
+        job outputs (provider, asset_id, license, attribution, sha256)."""
+        if not (_stock_available() and shutil.which("ffprobe")):
+            pytest.skip("No stock provider available")
+        proj = orch.create_project("p2")
+        job = orch.create_job("p2", JobType.VIDEO_SCENE, scene_index=0,
+                              inputs={"scene_index": 0, "duration": 4.0, "prompt": "sunset"})
+        result = orch.run_video_scene("p2", job.job_id)
+        if result.state is JobState.COMPLETED:
+            out = result.outputs
+            assert out["source"] == "stock_footage"
+            assert out["stock_provider"]
+            assert out["stock_asset_id"]
+            assert out["license_name"]
+            assert out["license_commercial_use"] in ("allowed", "unknown")
+            assert out["sha256"]
+            assert len(out["sha256"]) == 64  # SHA-256 hex

@@ -305,10 +305,20 @@ class WikimediaCommonsProvider(StockProvider):
         url_hash = hashlib.sha256(hit.download_url.encode()).hexdigest()[:16]
         cache_dir = config.ASSET_CACHE_DIR / self.name
         cache_dir.mkdir(parents=True, exist_ok=True)
-        # Determine if transcoding is needed from the raw mime.
+        # Determine if transcoding is needed.
+        # For video: transcode anything that is not already MP4 (WebM, Ogg/Theora,
+        # .ogv, .webm). For audio: transcode Ogg/WebM to WAV.
         mime = (hit.raw.get("_mime") or "").lower()
-        needs_video_transcode = "video/webm" in mime or "video/ogg" in mime or mime == ""
-        needs_audio_transcode = "audio/ogg" in mime or "audio/webm" in mime
+        raw_url_path = hit.download_url.split("?")[0].lower()
+        if hit.media_type == StockMediaType.VIDEO:
+            is_mp4 = (raw_url_path.endswith(".mp4") or raw_url_path.endswith(".m4v")
+                      or "video/mp4" in mime)
+            needs_video_transcode = not is_mp4
+        else:
+            needs_video_transcode = False
+        needs_audio_transcode = "audio/ogg" in mime or "audio/webm" in mime or \
+            raw_url_path.endswith(".ogg") or raw_url_path.endswith(".oga") or \
+            raw_url_path.endswith(".weba")
         if hit.media_type == StockMediaType.VIDEO:
             target_ext = ".mp4" if needs_video_transcode else ".mp4"
         elif hit.media_type == StockMediaType.IMAGE:
@@ -321,7 +331,9 @@ class WikimediaCommonsProvider(StockProvider):
             log("WIKIMEDIA", f"cache hit {hit.asset_id}", sha256=sha[:12])
             return StockDownloadResult(path=cached, hit=hit, sha256=sha, bytes_size=cached.stat().st_size)
         # Download the original first.
-        raw_ext = Path(hit.download_url.split("?")[0]).suffix.lower() or (".webm" if needs_video_transcode else ".bin")
+        raw_ext = Path(hit.download_url.split("?")[0]).suffix.lower()
+        if not raw_ext:
+            raw_ext = ".webm" if needs_video_transcode else (".ogg" if needs_audio_transcode else ".bin")
         raw_path = cache_dir / f"{hit.asset_id}_{url_hash}_raw{raw_ext}"
         raw_path.parent.mkdir(parents=True, exist_ok=True)
         self._stream_download(hit.download_url, raw_path, hit.asset_id)

@@ -358,8 +358,10 @@ class Orchestrator:
         return self._run_with_retry(proj, job, fn)
 
     def run_video_scene(self, project_id: str, job_id: str) -> Job:
-        """Provider-aware video generation. FAILS with NO_PROVIDER when no real
-        provider is configured — never fakes a video."""
+        """Provider-aware video generation. Tries AI generation (ComfyUI/Wan)
+        first; on NO_PROVIDER, falls back to real stock footage (Wikimedia/
+        Pexels/Pixabay) so a real video always flows into assembly when any
+        stock provider is available. Never fakes a video."""
         proj = self.get_project(project_id)
         job = proj.store.require(job_id)
         if not self.limiter.try_acquire(JobType.VIDEO_SCENE):
@@ -367,34 +369,118 @@ class Orchestrator:
                               f"Video concurrency limit reached ({self.limiter.max_video}).")
         try:
             def fn():
-                from ..providers.registry import select_provider
                 scene_index = job.inputs.get("scene_index")
-                # Build a GenerationRequest from the resolved scene context.
                 ctx = proj.scene_contexts.get(scene_index)
                 prompt = job.inputs.get("prompt") or (
                     ctx.visual_prompt if ctx else job.inputs.get("text", ""))
-                from ..providers.base import GenerationRequest
-                req = GenerationRequest(
-                    prompt=prompt,
-                    negative_prompt=job.inputs.get("negative_prompt", ""),
-                    duration=job.inputs.get("duration", 4.0),
-                    width=job.inputs.get("width", 1080),
-                    height=job.inputs.get("height", 1920),
-                    seed=job.seed,
-                )
-                # This is an async call; run it synchronously here.
-                loop = asyncio.new_event_loop()
+                width = job.inputs.get("width", 1080)
+                height = job.inputs.get("height", 1920)
+                duration = job.inputs.get("duration", 4.0)
+                # 1) Try AI video generation (ComfyUI/Wan).
                 try:
-                    provider = loop.run_until_complete(select_provider())
-                    job.provider = provider.info.name
-                    result = loop.run_until_complete(
-                        provider.generate(req, output_dir=proj.assets_dir))
-                finally:
-                    loop.close()
-                return str(result.path), {"prompt_id": getattr(result, "prompt_id", None)}
+                    from ..providers.registry import select_provider
+                    from ..providers.base import GenerationRequest
+                    req = GenerationRequest(
+                        prompt=prompt,
+                        negative_prompt=job.inputs.get("negative_prompt", ""),
+                        duration=duration,
+                        width=width,
+                        height=height,
+                        seed=job.seed,
+                    )
+                    loop = asyncio.new_event_loop()
+                    try:
+                        provider = loop.run_until_complete(select_provider())
+                        job.provider = provider.info.name
+                        result = loop.run_until_complete(
+                            provider.generate(req, output_dir=proj.assets_dir))
+                    finally:
+                        loop.close()
+                    return str(result.path), {"prompt_id": getattr(result, "prompt_id", None),
+                                              "source": "ai_generation"}
+                except VideoError as e:
+                    if e.code is not TypedErrorCode.NO_PROVIDER:
+                        raise
+                    # 2) Stock footage fallback (Wikimedia/Pexels/Pixabay).
+                    log("STOCK_FALLBACK", f"AI video provider unavailable for scene {scene_index}; "
+                        "using real stock footage", provider_hint="stock")
+                    return self._stock_video_fallback(proj, job, prompt, width, height, duration)
             return self._run_with_retry(proj, job, fn)
         finally:
             self.limiter.release(JobType.VIDEO_SCENE)
+
+    def _stock_video_fallback(self, proj, job, prompt: str,
+                              width: int, height: int, duration: float) -> tuple[str, dict]:
+        """Download a real stock video for the scene. Verifies the MP4 and
+        records full license provenance. Raises NO_PROVIDER when no stock
+        provider is available; raises NO_OUTPUT when search yields no hits."""
+        from ..providers.stock import StockMediaType, StockOrientation, StockSearchRequest
+        from ..providers.stock_adapters import build_stock_providers
+        providers = [p for p in build_stock_providers() if p.available]
+        if not providers:
+            raise VideoError(
+                TypedErrorCode.NO_PROVIDER,
+                "No video provider available: AI generation not configured AND no stock "
+                "provider available. Configure ComfyUI/Wan or a stock provider "
+                "(Wikimedia is keyless).",
+                context={"ai_provider": "NO_PROVIDER", "stock_providers": []},
+            )
+        # Infer orientation from target dimensions.
+        if height > width * 1.2:
+            orient = StockOrientation.PORTRAIT
+        elif width > height * 1.2:
+            orient = StockOrientation.LANDSCAPE
+        else:
+            orient = None
+        req = StockSearchRequest(
+            query=prompt,
+            media_type=StockMediaType.VIDEO,
+            orientation=orient,
+            min_duration=max(1.0, duration - 1.0),
+            per_page=10, page=1, language="en",
+        )
+        # Try each available stock provider until one returns usable hits.
+        last_err = None
+        for provider in providers:
+            try:
+                hits = provider.search(req)
+            except VideoError as e:
+                last_err = e
+                continue
+            # Filter to hits that allow commercial use (free-first policy).
+            usable = [h for h in hits
+                      if h.license_commercial_use in ("allowed", "unknown")]
+            if not usable:
+                continue
+            hit = usable[0]
+            dest = proj.assets_dir / f"scene_{job.inputs.get('scene_index', 0)}_{hit.asset_id}.mp4"
+            result = provider.download(hit, destination=dest)
+            # Verify the downloaded file is a real, decodable MP4.
+            verify_mp4(result.path)
+            job.provider = provider.name
+            log("STOCK_VIDEO", f"downloaded {result.path.name}",
+                provider=provider.name, license=hit.license_name,
+                bytes_size=result.bytes_size)
+            return str(result.path), {
+                "source": "stock_footage",
+                "stock_provider": provider.name,
+                "stock_asset_id": hit.asset_id,
+                "stock_page_url": hit.page_url,
+                "license_name": hit.license_name,
+                "license_commercial_use": hit.license_commercial_use,
+                "attribution_required": hit.attribution_required,
+                "attribution_text": hit.attribution_text,
+                "author": hit.author,
+                "sha256": result.sha256,
+            }
+        # No provider yielded usable hits.
+        raise VideoError(
+            TypedErrorCode.NO_OUTPUT,
+            f"Stock video search yielded no usable hits for prompt: '{prompt[:80]}'. "
+            f"Last error: {last_err}" if last_err else
+            f"Stock video search yielded no usable hits for prompt: '{prompt[:80]}'.",
+            context={"query": prompt[:200], "orientation": orient.value if orient else None},
+        )
 
     def run_voiceover(self, project_id: str, job_id: str) -> Job:
         """Provider-aware TTS. Uses the free-first router to select a real TTS
