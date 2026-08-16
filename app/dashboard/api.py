@@ -100,6 +100,16 @@ def _sfx_status() -> dict[str, Any]:
 async def provider_panel() -> dict[str, Any]:
     """Real provider readiness panel. Never claims ready merely because config exists."""
     comfy = await _comfyui_status()
+    from ..providers.router import build_default_router
+    from ..providers.stock_adapters import build_stock_providers
+    router = build_default_router()
+    stock = []
+    for p in build_stock_providers():
+        m = p.meta()
+        stock.append({
+            "name": p.name, "available": p.available,
+            "license": m.license.to_dict(), "cost": m.cost.to_dict(),
+        })
     return {
         "ffmpeg": _ffmpeg_status(),
         "comfyui": comfy["comfyui"],
@@ -107,6 +117,25 @@ async def provider_panel() -> dict[str, Any]:
         "tts": _tts_status(),
         "music": _music_status(),
         "sfx": _sfx_status(),
+        # Phase 13 additions
+        "stock": stock,
+        "router": router.status(),
+        "free_first": _free_first_status(),
+    }
+
+
+def _free_first_status() -> dict[str, Any]:
+    """Honest free-first policy + cost-guard summary."""
+    from .. import config
+    return {
+        "free_first": config.FREE_FIRST,
+        "allow_paid_providers": config.ALLOW_PAID_PROVIDERS,
+        "max_paid_cost_usd": config.MAX_PAID_COST_USD,
+        "policy": ("Paid providers are blocked (FREE_FIRST). "
+                   if config.FREE_FIRST and not config.ALLOW_PAID_PROVIDERS
+                   else "Paid providers allowed within budget. "
+                   if config.ALLOW_PAID_PROVIDERS
+                   else "Free-first off."),
     }
 
 
@@ -128,18 +157,24 @@ async def production_readiness() -> dict[str, Any]:
         return panel.get(name, {}).get("status") == "READY"
 
     content = "READY"
-    video = "READY" if ok("comfyui") or ok("wan") else "BLOCKED"
+    # VIDEO: AI generation (ComfyUI/Wan) OR stock footage can supply video.
+    stock_any = any(s.get("available") for s in panel.get("stock", []))
+    video = "READY" if (ok("comfyui") or ok("wan") or stock_any) else "BLOCKED"
+    stock_stage = "READY" if stock_any else "BLOCKED"
     voice = "READY" if ok("tts") else "BLOCKED"
     audio = "READY" if ok("music") and ok("sfx") and ok("ffmpeg") else "BLOCKED"
     captions = "READY" if ok("ffmpeg") else "BLOCKED"
     assembly = "READY" if ok("ffmpeg") else "BLOCKED"
     qc = "READY" if ok("ffmpeg") and ffprobe_available() else "BLOCKED"
-    overall = "READY" if all(s == "READY" for s in
-                             [content, video, voice, audio, captions, assembly, qc]) else "NOT_READY"
+    # Overall is READY only when a full free-first pipeline is possible without AI generation:
+    # content + (stock OR video-gen) + voice + assembly + QC. Audio (music/sfx) is optional
+    # for a minimal ad (silent or voice-only is still a valid MP4 after assembly).
+    core = [content, video, voice, captions, assembly, qc]
+    overall = "READY" if all(s == "READY" for s in core) else "NOT_READY"
     return {
         "overall": overall,
-        "content": content, "video": video, "voice": voice, "audio": audio,
-        "captions": captions, "assembly": assembly, "qc": qc,
+        "content": content, "video": video, "stock": stock_stage, "voice": voice,
+        "audio": audio, "captions": captions, "assembly": assembly, "qc": qc,
         "providers": panel,
     }
 

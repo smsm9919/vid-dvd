@@ -233,9 +233,9 @@ async function loadProviders(){
   try{
     const r=await fetch('/api/dashboard/readiness');const d=await r.json();
     // Readiness grid
-    const cells=[['CONTENT','content'],['VIDEO','video'],['VOICE','voice'],['AUDIO','audio'],['CAPTIONS','captions'],['ASSEMBLY','assembly'],['QC','qc']];
+    const cells=[['CONTENT','content'],['VIDEO','video'],['STOCK','stock'],['VOICE','voice'],['AUDIO','audio'],['CAPTIONS','captions'],['ASSEMBLY','assembly'],['QC','qc']];
     $('readiness-grid').innerHTML=cells.map(([label,key])=>{
-      const st=d[key];const cls=st==='READY'?'b-green':st==='BLOCKED'?'b-red':'b-yellow';
+      const st=d[key]||'BLOCKED';const cls=st==='READY'?'b-green':st==='BLOCKED'?'b-red':'b-yellow';
       return `<div class="readiness-cell"><div class="muted" style="font-size:10px">${label}</div>${badge(st,cls)}</div>`;
     }).join('');
     $('readiness-banner').innerHTML=`Overall: ${badge(d.overall,d.overall==='READY'?'b-green':'b-red')}`;
@@ -249,9 +249,20 @@ async function loadProviders(){
       if(info.version)extra+=`<div class="dim mono">${esc(info.version.substring(0,50))}</div>`;
       if(info.reason)extra+=`<div class="dim">${esc(info.reason.substring(0,80))}</div>`;
       if(info.url)extra+=`<div class="dim mono">${esc(info.url)}</div>`;
+      if(info.license)extra+=`<div class="dim">License: ${esc(info.license.name||'?')} (${esc(info.license.commercial_use||'?')})</div>`;
       return `<div class="provider-row"><div><div>${name}</div>${extra}</div>${badge(st,cls)}</div>`;
-    }).join('');
+    }).join('')+(p.stock&&p.stock.length?renderStockPanel(p.stock,p.free_first):'');
   }catch(e){$('readiness-banner').textContent='Failed to load status.'}
+}
+
+function renderStockPanel(stock,ff){
+  const rows=stock.map(s=>{
+    const st=s.available?'READY':'NOT_CONFIGURED';
+    const cls=s.available?'b-green':'b-yellow';
+    return `<div class="provider-row"><div><div>${esc(s.name)}</div><div class="dim">License: ${esc(s.license.name||'?')} (${esc(s.license.commercial_use||'?')})</div>${s.cost&&s.cost.note?`<div class="dim">${esc(s.cost.note.substring(0,80))}</div>`:''}</div>${badge(st,cls)}</div>`;
+  }).join('');
+  const policy=ff?`<div class="dim">${esc(ff.policy)}</div>`:'';
+  return `<div style="margin-top:8px;border-top:1px solid var(--border);padding-top:8px"><div class="muted" style="font-size:11px;margin-bottom:4px">FREE-FIRST HUB</div>${policy}${rows}</div>`;
 }
 
 // ---------- PROJECT CREATION ----------

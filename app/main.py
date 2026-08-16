@@ -768,3 +768,185 @@ def dashboard_download_asset(pid: str, filename: str):
     if not target.exists() or not target.is_file():
         raise HTTPException(404, {"code": "NOT_FOUND", "detail": "Asset not found."})
     return FileResponse(target, filename=target.name)
+
+
+# ============================================================================
+# Phase 13: free-first multi-provider hub routes
+# ============================================================================
+
+class StockSearchAPIRequest(BaseModel):
+    query: str
+    media_type: str = "video"
+    orientation: Optional[str] = None
+    min_duration: Optional[float] = None
+    max_duration: Optional[float] = None
+    per_page: int = 15
+    page: int = 1
+    language: str = "en"
+
+
+@app.get("/api/dashboard/stock/search")
+def dashboard_stock_search(query: str, media_type: str = "video",
+                           orientation: Optional[str] = None,
+                           per_page: int = 15, page: int = 1,
+                           language: str = "en"):
+    """Search free stock providers (Pexels/Pixabay). Returns normalized hits
+    with license + provenance. Requires an API key (returns NOT_CONFIGURED
+    honestly when none is set)."""
+    from .providers.stock import StockMediaType, StockOrientation, StockSearchRequest
+    from .providers.stock_adapters import build_stock_providers
+    from .providers.router import build_default_router
+    try:
+        mt = StockMediaType(media_type)
+    except ValueError:
+        raise HTTPException(400, {"code": "INVALID_MEDIA_TYPE",
+                                  "detail": f"media_type must be one of {[m.value for m in StockMediaType]}"})
+    orient = None
+    if orientation:
+        try:
+            orient = StockOrientation(orientation)
+        except ValueError:
+            raise HTTPException(400, {"code": "INVALID_ORIENTATION",
+                                      "detail": f"orientation must be one of {[o.value for o in StockOrientation]}"})
+    req = StockSearchRequest(query=query, media_type=mt, orientation=orient,
+                             per_page=per_page, page=page, language=language,
+                             min_duration=None, max_duration=None)
+    providers = build_stock_providers()
+    available = [p for p in providers if p.available]
+    if not available:
+        return {"status": "NOT_CONFIGURED",
+                "reason": "No stock API key configured. Set PEXELS_API_KEY or PIXABAY_API_KEY.",
+                "hits": [], "provider": None}
+    # Use the first available provider (free-first router preference).
+    provider = available[0]
+    try:
+        hits = provider.search(req)
+    except VideoError as e:
+        raise HTTPException(502, e.to_dict())
+    return {"status": "OK", "provider": provider.name,
+            "hits": [h.to_dict() for h in hits], "count": len(hits)}
+
+
+@app.post("/api/dashboard/stock/download")
+def dashboard_stock_download(payload: dict):
+    """Download a stock hit to a project's asset library. Records full
+    provenance + license, verifies the file, and catalogs it."""
+    from .providers.stock import StockHit, StockMediaType
+    from .providers.stock_adapters import build_stock_providers
+    from .assets.library import AssetLibrary, AssetRecord, AssetOrigin, AssetType, LicenseRecord
+    import hashlib
+    pid = payload.get("project_id")
+    if not pid:
+        raise HTTPException(400, {"code": "INVALID_REQUEST", "detail": "project_id required."})
+    hit_data = payload.get("hit")
+    if not hit_data:
+        raise HTTPException(400, {"code": "INVALID_REQUEST", "detail": "hit required."})
+    try:
+        proj = ORCHESTRATOR.get_project(pid)
+    except JobError as e:
+        raise HTTPException(404, e.to_dict())
+    provider_name = hit_data.get("provider")
+    providers = {p.name: p for p in build_stock_providers()}
+    provider = providers.get(provider_name)
+    if provider is None or not provider.available:
+        raise HTTPException(502, {"code": "PROVIDER_DISABLED",
+                                  "detail": f"Provider {provider_name} not available."})
+    hit = StockHit(
+        provider=hit_data.get("provider", ""),
+        media_type=StockMediaType(hit_data.get("media_type", "video")),
+        asset_id=str(hit_data.get("asset_id", "")),
+        page_url=hit_data.get("page_url", ""),
+        download_url=hit_data.get("download_url", ""),
+        width=hit_data.get("width"), height=hit_data.get("height"),
+        duration=hit_data.get("duration"), fps=hit_data.get("fps"),
+        thumbnail_url=hit_data.get("thumbnail_url"),
+        author=hit_data.get("author"), author_url=hit_data.get("author_url"),
+        license_name=hit_data.get("license_name", "Unknown"),
+        license_commercial_use=hit_data.get("license_commercial_use", "unknown"),
+        attribution_required=hit_data.get("attribution_required", False),
+        attribution_text=hit_data.get("attribution_text"),
+    )
+    try:
+        result = provider.download(hit)
+    except VideoError as e:
+        raise HTTPException(502, e.to_dict())
+    # Catalog in the project asset library.
+    lib = AssetLibrary(proj.assets_dir.parent / "asset_library" / pid)
+    media_type = StockMediaType(hit_data.get("media_type", "video"))
+    asset_type = AssetType.VIDEO if media_type == StockMediaType.VIDEO else AssetType.IMAGE
+    record = AssetRecord(
+        asset_id=f"{provider.name}_{hit.asset_id}",
+        type=asset_type, path=str(result.path), origin=AssetOrigin.STOCK,
+        provider=provider.name, source_url=hit.download_url,
+        source_asset_id=hit.asset_id, page_url=hit.page_url,
+        license=LicenseRecord(
+            name=hit.license_name, commercial_use=hit.license_commercial_use,
+            attribution_required=hit.attribution_required,
+            attribution_text=hit.attribution_text, provider=provider.name,
+            author=hit.author, source_url=hit.page_url,
+        ),
+        hash=result.sha256, bytes_size=result.bytes_size,
+        width=hit.width, height=hit.height, duration=hit.duration, fps=hit.fps,
+        tags=[payload.get("query", "")] if payload.get("query") else [],
+        scene_usage=payload.get("scene_usage", []),
+        project_id=pid,
+    )
+    lib.add(record)
+    # Run real QC on the downloaded file.
+    if asset_type == AssetType.VIDEO:
+        try:
+            lib.verify(record.asset_id)
+        except VideoError:
+            pass
+    return {"status": "OK", "asset_id": record.asset_id, "path": str(result.path),
+            "sha256": result.sha256, "bytes": result.bytes_size,
+            "license": record.license.to_dict()}
+
+
+@app.get("/api/dashboard/projects/{pid}/asset-library")
+def dashboard_asset_library(pid: str, type: Optional[str] = None):
+    """List assets in a project's provenance-aware library with QC state."""
+    from .assets.library import AssetLibrary, AssetType
+    from . import config
+    asset_type = None
+    if type:
+        try:
+            asset_type = AssetType(type)
+        except ValueError:
+            raise HTTPException(400, {"code": "INVALID_TYPE", "detail": f"type must be one of {[t.value for t in AssetType]}"})
+    lib_dir = config.ASSET_LIBRARY_DIR / pid
+    if not lib_dir.exists():
+        return {"assets": [], "total": 0, "note": "No asset library for this project yet."}
+    lib = AssetLibrary(lib_dir)
+    records = lib.list(type=asset_type, project_id=pid)
+    return {"assets": [r.to_dict() for r in records], "total": len(records)}
+
+
+@app.post("/api/dashboard/projects/{pid}/asset-library/{aid}/verify")
+def dashboard_asset_verify(pid: str, aid: str):
+    """Run real media QC on a cataloged asset. Updates qc_state honestly."""
+    from .assets.library import AssetLibrary
+    from . import config
+    lib = AssetLibrary(config.ASSET_LIBRARY_DIR / pid)
+    try:
+        rec = lib.verify(aid)
+    except VideoError as e:
+        raise HTTPException(404, e.to_dict())
+    return rec.to_dict()
+
+
+@app.get("/api/dashboard/projects/{pid}/license-report")
+def dashboard_license_report(pid: str):
+    """Aggregate license/provenance report for a project's assets."""
+    from .assets.library import AssetLibrary
+    from . import config
+    lib = AssetLibrary(config.ASSET_LIBRARY_DIR / pid)
+    return lib.license_report(project_id=pid)
+
+
+@app.get("/api/dashboard/providers/router")
+def dashboard_router_status():
+    """Free-first router status: per-provider eligibility, cost, license, capabilities."""
+    from .providers.router import build_default_router
+    router = build_default_router()
+    return {"providers": router.status(), "count": len(router.providers)}
