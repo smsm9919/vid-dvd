@@ -39,7 +39,12 @@ verification (no mocks/fake MP4/placeholders as runtime success).
 - Phase 10 (professional video editing + final assembly): DONE, pushed
 - Phase 11 (production job orchestration + recovery): DONE, pushed
 - Phase 12 (production control center / dashboard): DONE, pushed
-- Phase 13+ : NOT STARTED (awaiting approval — do NOT invent)
+- Phase 13 (free-first multi-provider production hub): IN PROGRESS
+  - M1 Wikimedia keyless stock provider: DONE (commit f1521b2)
+  - M2 Kokoro-82M TTS provider: DONE (commit cadbe8f)
+  - M3 Stock video → orchestrator fallback: DONE (commit b42a6e2)
+  - M4 End-to-end real production (stock+Kokoro+FFmpeg): DONE (commit 22f7d0d)
+  - M5-M6: pending (dashboard multi-provider states, docs)
 
 ## Test Suite
 - 550 tests passing. Run: `python -m pytest tests/ -q`
