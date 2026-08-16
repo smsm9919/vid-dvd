@@ -154,7 +154,14 @@ def build_default_router() -> ProviderRouter:
             router.register(p, p)
     except Exception:
         pass
-    # Piper TTS (free, local CPU, GPL-3.0 opt-in).
+    # Kokoro TTS (free, local CPU, Apache 2.0 — preferred over Piper).
+    try:
+        from ..voice.kokoro import build_kokoro_provider
+        k = build_kokoro_provider()
+        router.register(k, k)
+    except Exception:
+        pass
+    # Piper TTS (free, local CPU, GPL-3.0 opt-in — fallback).
     try:
         from ..voice.piper import build_piper_provider
         p = build_piper_provider()
@@ -165,8 +172,18 @@ def build_default_router() -> ProviderRouter:
 
 
 def build_tts_providers() -> list:
-    """Build the list of real TTS providers for select_tts_provider."""
+    """Build the list of real TTS providers for select_tts_provider.
+
+    Kokoro (Apache 2.0) is preferred over Piper (GPL-3.0) for commercial use.
+    """
     providers = []
+    try:
+        from ..voice.kokoro import build_kokoro_provider
+        k = build_kokoro_provider()
+        if k.available:
+            providers.append(k)
+    except Exception:
+        pass
     try:
         from ..voice.piper import build_piper_provider
         p = build_piper_provider()

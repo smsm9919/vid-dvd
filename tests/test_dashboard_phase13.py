@@ -19,8 +19,9 @@ def test_dashboard_router_status_lists_all_providers():
     assert "wikimedia" in names  # keyless, always available
     assert "pexels" in names
     assert "pixabay" in names
+    assert "kokoro" in names  # Apache 2.0 TTS (registered regardless of enabled)
     assert "piper" in names
-    assert data["count"] == 4
+    assert data["count"] == 5
 
 
 def test_dashboard_router_status_reports_paid_block():

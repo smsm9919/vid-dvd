@@ -9,3 +9,8 @@ pydantic>=2.10,<3
 # adapter — only loaded when PIPER_ENABLED=true. Install separately if you want
 # local TTS:  pip install piper-tts
 piper-tts>=1.7; python_version >= "3.9" and extra == "piper"
+# kokoro-onnx is MIT; Kokoro-82M model weights are Apache 2.0 (commercial-safe,
+# no copyleft). Preferred free-first TTS. Opt-in via KOKORO_ENABLED=true.
+# Model files (~88MB int8 + 27MB voices) downloaded out-of-band to models/kokoro.
+kokoro-onnx>=0.5; python_version >= "3.9" and extra == "kokoro"
+soundfile>=0.12; python_version >= "3.9" and extra == "kokoro"

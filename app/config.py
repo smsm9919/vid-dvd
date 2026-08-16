@@ -56,3 +56,15 @@ PIPER_VOICES_DIR = ROOT / os.getenv("PIPER_VOICES_DIR", "models/piper_voices")
 PIPER_DEFAULT_VOICE_EN = os.getenv("PIPER_DEFAULT_VOICE_EN", "en_US-lessac-medium").strip()
 PIPER_DEFAULT_VOICE_DE = os.getenv("PIPER_DEFAULT_VOICE_DE", "de_DE-thorsten-medium").strip()
 PIPER_DEFAULT_VOICE_AR = os.getenv("PIPER_DEFAULT_VOICE_AR", "").strip()
+
+# Kokoro TTS (local, CPU, Apache 2.0 — preferred free-first TTS).
+# kokoro-onnx is MIT; Kokoro-82M weights are Apache 2.0 (commercial-safe).
+# Model files are downloaded out-of-band (never bundled in the repo) to
+# KOKORO_MODEL_DIR. Enable by setting KOKORO_ENABLED=true.
+KOKORO_ENABLED = os.getenv("KOKORO_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
+KOKORO_MODEL_DIR = ROOT / os.getenv("KOKORO_MODEL_DIR", "models/kokoro")
+KOKORO_MODEL_FILE = os.getenv("KOKORO_MODEL_FILE", "kokoro-v1.0.int8.onnx").strip()
+KOKORO_VOICES_FILE = os.getenv("KOKORO_VOICES_FILE", "voices-v1.0.bin").strip()
+KOKORO_DEFAULT_VOICE_EN = os.getenv("KOKORO_DEFAULT_VOICE_EN", "af_heart").strip()
+KOKORO_DEFAULT_VOICE_DE = os.getenv("KOKORO_DEFAULT_VOICE_DE", "af_heart").strip()  # no native de voice; uses en voice + de phonemization
+KOKORO_DEFAULT_VOICE_AR = os.getenv("KOKORO_DEFAULT_VOICE_AR", "af_heart").strip()  # no native ar voice; uses en voice + ar phonemization
