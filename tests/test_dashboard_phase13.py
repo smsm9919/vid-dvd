@@ -16,10 +16,11 @@ def test_dashboard_router_status_lists_all_providers():
     assert r.status_code == 200
     data = r.json()
     names = [p["name"] for p in data["providers"]]
+    assert "wikimedia" in names  # keyless, always available
     assert "pexels" in names
     assert "pixabay" in names
     assert "piper" in names
-    assert data["count"] == 3
+    assert data["count"] == 4
 
 
 def test_dashboard_router_status_reports_paid_block():
@@ -31,9 +32,26 @@ def test_dashboard_router_status_reports_paid_block():
 
 
 # --------------------------------------------------------------------- stock search
-def test_stock_search_not_configured_without_keys(monkeypatch):
+def test_stock_search_keyless_wikimedia_works_without_keys(monkeypatch):
+    """Wikimedia is keyless — stock search works even with no Pexels/Pixabay keys."""
     monkeypatch.setattr(config, "PEXELS_API_KEY", "")
     monkeypatch.setattr(config, "PIXABAY_API_KEY", "")
+    r = client.get("/api/dashboard/stock/search", params={"query": "ocean"})
+    assert r.status_code == 200
+    data = r.json()
+    # Wikimedia is available keyless, so status is OK (not NOT_CONFIGURED).
+    assert data["status"] == "OK"
+    assert data["provider"] == "wikimedia"
+
+
+def test_stock_search_not_configured_when_no_provider(monkeypatch):
+    """When ALL stock providers are unavailable, returns NOT_CONFIGURED honestly."""
+    # Make Wikimedia unavailable by patching its availability.
+    from app.providers.stock_adapters import build_stock_providers
+    import app.providers.wikimedia as wm
+    monkeypatch.setattr(config, "PEXELS_API_KEY", "")
+    monkeypatch.setattr(config, "PIXABAY_API_KEY", "")
+    monkeypatch.setattr(wm.WikimediaCommonsProvider, "available", property(lambda self: False))
     r = client.get("/api/dashboard/stock/search", params={"query": "ocean"})
     assert r.status_code == 200
     data = r.json()
@@ -63,6 +81,7 @@ def test_provider_panel_includes_stock_and_router():
     assert "free_first" in data
     assert isinstance(data["stock"], list)
     stock_names = [s["name"] for s in data["stock"]]
+    assert "wikimedia" in stock_names  # keyless provider
     assert "pexels" in stock_names
     assert "pixabay" in stock_names
 
@@ -82,8 +101,8 @@ def test_readiness_includes_stock_stage():
     assert r.status_code == 200
     data = r.json()
     assert "stock" in data
-    # Without API keys, stock is BLOCKED
-    assert data["stock"] == "BLOCKED"
+    # Wikimedia is keyless and always available, so stock is READY.
+    assert data["stock"] == "READY"
     assert "providers" in data
     assert "stock" in data["providers"]
 

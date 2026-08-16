@@ -147,7 +147,7 @@ class ProviderRouter:
 def build_default_router() -> ProviderRouter:
     """Build the default free-first router with all configured providers."""
     router = ProviderRouter()
-    # Stock providers (free, network).
+    # Stock providers (free, network) — Wikimedia first (keyless).
     try:
         from .stock_adapters import build_stock_providers
         for p in build_stock_providers():

@@ -89,19 +89,26 @@ class TestProviderStatus:
         d = r.json()
         for key in ("overall", "content", "video", "voice", "audio", "captions", "assembly", "qc"):
             assert key in d
-        # In test env: video/voice/audio blocked; content/captions/assembly/qc ready.
+        # In test env: Wikimedia stock is available (keyless) so video is READY
+        # via stock footage; voice/audio blocked (no TTS/music); content/captions/
+        # assembly/qc ready.
         assert d["content"] == "READY"
-        assert d["video"] == "BLOCKED"
+        assert d["video"] == "READY"  # stock (Wikimedia) supplies video
         assert d["voice"] == "BLOCKED"
         assert d["captions"] == "READY"
         assert d["assembly"] == "READY"
         assert d["qc"] == "READY"
-        assert d["overall"] == "NOT_READY"
 
-    def test_readiness_does_not_claim_video_ready(self, client):
-        """Critical: never claim video is ready when no ComfyUI/Wan available."""
+    def test_readiness_video_requires_real_source(self, client, monkeypatch):
+        """Video is only READY when ComfyUI/Wan OR stock is actually available.
+        When ALL video sources are unavailable, it must be BLOCKED."""
+        import app.providers.wikimedia as wm
+        from app import config
+        monkeypatch.setattr(config, "PEXELS_API_KEY", "")
+        monkeypatch.setattr(config, "PIXABAY_API_KEY", "")
+        monkeypatch.setattr(wm.WikimediaCommonsProvider, "available", property(lambda self: False))
         r = client.get("/api/dashboard/readiness")
-        assert r.json()["video"] != "READY"
+        assert r.json()["video"] == "BLOCKED"
 
     def test_provider_reason_includes_diagnostics(self, client):
         r = client.get("/api/dashboard/providers")

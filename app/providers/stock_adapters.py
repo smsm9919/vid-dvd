@@ -279,8 +279,20 @@ class PixabayStockProvider(StockProvider):
 
 
 def build_stock_providers() -> list[StockProvider]:
-    """Instantiate all configured stock providers (preference order)."""
-    return [PexelsStockProvider(), PixabayStockProvider()]
+    """Instantiate all configured stock providers (preference order).
+
+    Wikimedia is first: keyless, always available, real free media.
+    Pexels/Pixabay follow: require API keys.
+    """
+    providers: list[StockProvider] = []
+    try:
+        from .wikimedia import WikimediaCommonsProvider
+        providers.append(WikimediaCommonsProvider())
+    except Exception:
+        pass
+    providers.append(PexelsStockProvider())
+    providers.append(PixabayStockProvider())
+    return providers
 
 
 async def select_stock_provider(providers: Optional[list[StockProvider]] = None) -> StockProvider:

@@ -43,6 +43,7 @@ from .contracts import (
 class StockMediaType(str, Enum):
     VIDEO = "video"
     IMAGE = "image"
+    AUDIO = "audio"
 
 
 class StockOrientation(str, Enum):
@@ -244,10 +245,14 @@ class StockProvider(abc.ABC):
     @staticmethod
     def _infer_extension(hit: StockHit, url: str) -> str:
         low = url.lower().split("?")[0]
-        for ext in (".mp4", ".mov", ".webm", ".jpg", ".jpeg", ".png", ".webp"):
+        for ext in (".mp4", ".mov", ".webm", ".ogg", ".oga", ".jpg", ".jpeg", ".png", ".webp", ".wav", ".mp3"):
             if low.endswith(ext):
                 return ext
-        return ".mp4" if hit.media_type == StockMediaType.VIDEO else ".jpg"
+        if hit.media_type == StockMediaType.VIDEO:
+            return ".mp4"
+        if hit.media_type == StockMediaType.AUDIO:
+            return ".wav"
+        return ".jpg"
 
 
 def stock_provider_status(providers: list[StockProvider]) -> list[dict[str, Any]]:
